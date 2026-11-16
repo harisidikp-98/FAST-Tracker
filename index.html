@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FAST Territory Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+</head>
+<body>
+  <!-- ===== SIDEBAR ===== -->
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-logo"><i data-lucide="radar"></i></div>
+      <div class="brand-name" id="appName">FAST Territory Tracker</div>
+    </div>
+    <div class="user">
+      <div class="user-role" id="userRole">AASM</div>
+      <div class="user-name" id="userName">NAMA USER</div>
+    </div>
+
+    <nav class="nav">
+      <button type="button" class="nav-item active" data-page="Dashboard"><i data-lucide="presentation"></i><span>Dashboard</span></button>
+      <button type="button" class="nav-item" data-page="Beranda"><i data-lucide="home"></i><span>Beranda</span></button>
+      <button type="button" class="nav-item" data-page="Detail KPI"><i data-lucide="target"></i><span>Detail KPI</span></button>
+      <button type="button" class="nav-item" data-page="Tim DSR"><i data-lucide="users"></i><span>Tim DSR</span></button>
+      <button type="button" class="nav-item" data-page="Insentif"><i data-lucide="circle-dollar-sign"></i><span>Insentif</span></button>
+      <button type="button" class="nav-item" data-page="Stock"><i data-lucide="package"></i><span>Stock</span></button>
+      <div class="nav-group">ALAT</div>
+      <button type="button" class="nav-item" data-page="Outlet"><i data-lucide="store"></i><span>Outlet</span></button>
+      <button type="button" class="nav-item" data-page="Konfirmasi Pajangan"><i data-lucide="layout-grid"></i><span>Konfirmasi Pajangan</span></button>
+      <button type="button" class="nav-item" data-page="Checklist Akhir Bulan"><i data-lucide="clipboard-check"></i><span>Checklist Akhir Bulan</span></button>
+    </nav>
+
+    <div class="sync">
+      <span class="sync-dot" id="syncDot"></span>
+      <span>Sinkron <b id="syncTime">--.--</b></span>
+      <button type="button" class="icon-btn" id="refreshBtn" title="Muat ulang data" aria-label="Muat ulang data"><i data-lucide="refresh-cw"></i></button>
+    </div>
+  </aside>
+  <div class="overlay" id="overlay"></div>
+
+  <!-- ===== MAIN ===== -->
+  <main class="main">
+    <div class="topbar-mobile">
+      <button type="button" class="icon-btn" id="menuBtn" aria-label="Buka menu"><i data-lucide="menu"></i></button>
+      <span class="topbar-title" id="appNameMobile">FAST Territory Tracker</span>
+    </div>
+
+    <div class="load-banner" id="loadBanner" role="status" aria-live="polite">
+      <div class="spinner"></div>
+      <div class="load-body">
+        <div class="load-title" id="loadTitle">Memuat data…</div>
+        <div class="load-sub" id="loadSub">Angka masih bisa berubah. Tunggu sampai selesai sebelum dipakai briefing.</div>
+        <div class="load-track"><div class="load-fill" id="loadFill"></div></div>
+      </div>
+    </div>
+
+    <header class="page-head">
+      <h1>Dashboard</h1>
+      <p class="page-date" id="pageDate">-</p>
+    </header>
+
+    <div class="tabs" id="dtTabs" role="tablist"></div>
+
+    <section class="summary">
+      <div class="summary-left">
+        <div class="eyebrow"><i data-lucide="bar-chart-3"></i> DASHBOARD</div>
+        <h2 id="scopeTitle">Gabungan</h2>
+        <span class="badge" id="loadBadge">⏳ Memuat…</span>
+      </div>
+      <div class="info-cards">
+        <div class="info-card">
+          <div class="info-label">LAJU WAKTU</div>
+          <div class="info-value" id="lajuValue">-</div>
+          <div class="info-sub" id="lajuSub">-</div>
+        </div>
+        <div class="info-card">
+          <div class="info-label">SISA HARI KERJA</div>
+          <div class="info-value" id="sisaValue">-</div>
+          <div class="info-sub">sampai akhir bulan</div>
+        </div>
+        <div class="info-card wide">
+          <div class="info-label">DATA S.D. (PER DT)</div>
+          <div class="info-dates" id="dataDates">-</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="filters">
+      <label class="select-wrap">
+        <span class="sr-only">Filter salesman</span>
+        <select id="dsrSelect"></select>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="incentiveChk"> Tampilkan insentif DSR
+      </label>
+      <button type="button" class="btn-dark" id="fsBtn"><i data-lucide="maximize"></i> <span id="fsLabel">Layar penuh</span></button>
+    </div>
+
+    <section class="grid" id="kpiGrid" aria-live="polite"></section>
+
+    <footer class="foot">Update data: upload ulang file export DT ke folder <code>data/</code> · Target: <code>data/target_&lt;dt&gt;.csv</code></footer>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>

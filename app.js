@@ -1,0 +1,559 @@
+/* =========================================================
+   FAST TERRITORY TRACKER — Dashboard Monitoring KPI DSR
+   ---------------------------------------------------------
+   Setiap DT punya file data sendiri di folder /data.
+   Upload ulang file DT tertentu → hanya tab DT itu yang berubah.
+   Bagian bertanda "UBAH" boleh Anda sesuaikan.
+   ========================================================= */
+
+/* ===== 1. KONFIGURASI UMUM — UBAH ===== */
+const CONFIG = {
+  appName: 'FAST Territory Tracker',
+  userRole: 'AASM',                     // UBAH: jabatan
+  userName: 'HARI SIDIK PRAMONO',       // UBAH: nama user
+  // UBAH: libur nasional (YYYY-MM-DD) — dikecualikan dari hari kerja (Senin–Sabtu)
+  holidays: ['2026-12-25'],
+  greenMin: 1.0,   // pencapaian ≥ 100% laju waktu → hijau
+  yellowMin: 0.8   // 80–99% laju waktu → kuning; di bawahnya merah
+};
+
+/* ===== 2. DAFTAR DT — UBAH =====
+   salesFile : file export "UID Extract Secondary Sale Data Report" (.xlsx) atau .csv
+   targetFile: file target per DSR (format lihat data/target_naicom.csv)
+   excludeDsr: kode salesman yang BUKAN DSR (tidak tampil di daftar DSR,
+               tapi angkanya tetap masuk total DT), contoh Shopsales = '00'  */
+const DTS = [
+  { code: 'CAS',    name: 'CV. Citra Anugrah Sejahtera', short: 'Citra Anugrah', salesFile: 'data/citra_anugrah.xlsx', targetFile: 'data/target_citra_anugrah.csv', excludeDsr: ['00'] },
+  { code: 'NAICOM', name: 'CV. Naicom Mandiri',          short: 'Naicom',        salesFile: 'data/naicom.xlsx',        targetFile: 'data/target_naicom.csv',        excludeDsr: ['00'] },
+  { code: 'ACP',    name: 'PT. Aditama Citra Papua',     short: 'Aditama',       salesFile: 'data/aditama.xlsx',       targetFile: 'data/target_aditama.csv',       excludeDsr: ['00'] },
+  { code: 'KKK',    name: 'CV. Karya Kasih Karunia',     short: 'Karya Kasih',   salesFile: 'data/karya_kasih.xlsx',   targetFile: 'data/target_karya_kasih.csv',   excludeDsr: ['00'] }
+];
+
+/* ===== 3. DAFTAR KPI — UBAH =====
+   code     : harus sama dengan kolom KPI di file target
+   source   : 'omset' / 'bills' = dihitung dari file sales
+              null = sumber data belum ada → kartu "Data belum tersedia"
+   incentive: insentif per DSR (Rp) jika pencapaian ≥ incentiveMin. 0 = belum diatur */
+const KPIS = [
+  { code: 'OMSET', name: 'Omset (SSV)',        source: 'omset', money: true,  unit: '',     basis: 'Dasar: GSV (retur mengurangi omset) · target omset DSR 100%', incentive: 0, incentiveMin: 1.0 },
+  { code: 'BILLS', name: 'Bills Productivity', source: 'bills', money: false, unit: 'bill', basis: 'Dasar: 1 bill = 1 toko unik belanja per hari',                 incentive: 0, incentiveMin: 1.0 },
+  { code: 'AVAIL', name: 'Availability',       source: null,    money: false, unit: '',     basis: 'Batas: 40% slab bawah · 60% slab atas',                         incentive: 0, incentiveMin: 0.4 },
+  { code: 'DIGI',  name: 'Digitization',       source: null,    money: false, unit: '',     basis: 'Batas: 40% dari outlet panel',                                  incentive: 0, incentiveMin: 0.4 },
+  { code: 'PS',    name: 'Perfect Store',      source: null,    money: false, unit: '',     basis: 'Target tim: 50% outlet panel perfect',                          incentive: 0, incentiveMin: 0.5 },
+  { code: 'HYG',   name: 'Hygiene (DSR)',      source: null,    money: false, unit: '',     basis: 'KPI DSS: Hygiene Factor DSR ≥ 75%',                             incentive: 0, incentiveMin: 0.75 }
+];
+
+/* ===== 3b. DAFTAR BU — UBAH =====
+   BU dibaca dari kolom "Sub_division" di file export.
+   match: pola awal nama BU di data (huruf besar). */
+const BUS = [
+  { code: 'BW',    name: 'Beauty & Wellbeing', short: 'B&W',   match: /^BEAUTY/ },
+  { code: 'PC',    name: 'Personal Care',      short: 'PC',    match: /^PERSONAL/ },
+  { code: 'HC',    name: 'Home Care',          short: 'HC',    match: /^HOME/ },
+  { code: 'FOODS', name: 'Foods',              short: 'Foods', match: /^FOOD/ }
+];
+function normBU(v) {
+  const s = String(v ?? '').trim().toUpperCase();
+  const b = BUS.find(x => x.match.test(s) || x.code === s || x.short.toUpperCase() === s);
+  return b ? b.code : 'OTHER';
+}
+
+/* ===== 4. STATE & UTIL ===== */
+const state = { data: {}, dt: 'ALL', dsr: 'ALL', showIncentive: false, laju: 0, loading: false };
+const $ = id => document.getElementById(id);
+const nf = new Intl.NumberFormat('id-ID');
+const fmtNum = n => nf.format(Math.round(n || 0));
+const fmtJt = n => { const a = Math.abs(n || 0), sg = n < 0 ? '-' : ''; return a >= 1e9 ? sg + (a / 1e9).toLocaleString('id-ID', { maximumFractionDigits: 2 }) + ' M' : sg + (a / 1e6).toLocaleString('id-ID', { maximumFractionDigits: 1 }) + ' jt'; };
+const fmtRp = n => (n < 0 ? '-Rp' : 'Rp') + fmtNum(Math.abs(n));
+const fmtPct = r => (isFinite(r) ? r * 100 : 0).toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%';
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const BULAN = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+const HARI = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
+const BLN3 = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const shortDate = d => d ? `${d.getDate()} ${BLN3[d.getMonth()]}` : '-';
+const dtByCode = c => DTS.find(d => d.code === c);
+
+/* Angka: mendukung "143,892.00" (format export) maupun "143.892,00" */
+function toNum(v) {
+  if (typeof v === 'number') return v;
+  let s = String(v ?? '').trim().replace(/[^\d.,-]/g, '');
+  if (!s) return 0;
+  const lc = s.lastIndexOf(','), ld = s.lastIndexOf('.');
+  if (lc > ld) s = s.replace(/\./g, '').replace(',', '.');   // 1.234,56
+  else s = s.replace(/,/g, '');                              // 1,234.56
+  const n = parseFloat(s);
+  return isFinite(n) ? n : 0;
+}
+/* Tanggal: DD/MM/YYYY, YYYY-MM-DD, atau serial Excel */
+function toDate(v) {
+  const s = String(v ?? '').trim();
+  let m = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/.exec(s);
+  if (m) return new Date(+m[3], +m[2] - 1, +m[1]);
+  m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s);
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
+  if (/^\d{5}(\.\d+)?$/.test(s)) { const d = new Date(Math.round((+s - 25569) * 864e5)); return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()); }
+  return null;
+}
+function isWorkday(d) { return d.getDay() !== 0 && !CONFIG.holidays.includes(ymd(d)); }
+function statusOf(ratio) {
+  if (ratio == null) return 's-none';
+  if (state.laju <= 0) return 's-green';
+  const r = ratio / state.laju;
+  if (r >= CONFIG.greenMin) return 's-green';
+  if (r >= CONFIG.yellowMin) return 's-yellow';
+  return 's-red';
+}
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 2400);
+}
+
+/* ===== 5. BACA FILE EXCEL (tanpa library besar) =====
+   File export UID berisi 1 kolom teks dipisah titik koma (;).
+   Parser ini juga mendukung xlsx biasa (banyak kolom) dan CSV.  */
+const decodeXml = s => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+  .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n)).replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16))).replace(/&amp;/g, '&');
+const textOf = xml => { let out = '', m; const re = /<t\b[^>]*>([\s\S]*?)<\/t>/g; while ((m = re.exec(xml))) out += m[1]; return decodeXml(out); };
+const colIndex = ref => { const l = (/^[A-Z]+/.exec(ref || 'A') || ['A'])[0]; let n = 0; for (const ch of l) n = n * 26 + ch.charCodeAt(0) - 64; return n - 1; };
+
+async function xlsxToRows(buf) {
+  const zip = await JSZip.loadAsync(buf);
+  const sheetPath = Object.keys(zip.files).filter(p => /^xl\/worksheets\/sheet\d+\.xml$/.test(p)).sort()[0];
+  if (!sheetPath) throw new Error('Sheet tidak ditemukan');
+  let shared = [];
+  if (zip.file('xl/sharedStrings.xml')) {
+    const ss = await zip.file('xl/sharedStrings.xml').async('string');
+    const re = /<si\b[^>]*>([\s\S]*?)<\/si>/g; let m;
+    while ((m = re.exec(ss))) shared.push(textOf(m[1]));
+  }
+  const xml = await zip.file(sheetPath).async('string');
+  const rows = [];
+  const rowRe = /<row\b[^>]*>([\s\S]*?)<\/row>/g, cellRe = /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
+  let rm;
+  while ((rm = rowRe.exec(xml))) {
+    const row = []; let cm, auto = 0;
+    cellRe.lastIndex = 0;
+    while ((cm = cellRe.exec(rm[1]))) {
+      const attrs = cm[1], body = cm[2] || '';
+      const ref = (/\br="([A-Z]+)\d*"/.exec(attrs) || [])[1];
+      const idx = ref ? colIndex(ref) : auto; auto = idx + 1;
+      const type = (/\bt="(\w+)"/.exec(attrs) || [])[1];
+      let val = '';
+      if (type === 'inlineStr') val = textOf(body);
+      else { const v = (/<v>([\s\S]*?)<\/v>/.exec(body) || [])[1] || ''; val = type === 's' ? (shared[+v] || '') : decodeXml(v); }
+      row[idx] = val;
+    }
+    if (row.some(v => String(v ?? '').trim() !== '')) rows.push(row.map(v => v ?? ''));
+  }
+  return rows;
+}
+
+/* Ubah baris mentah → objek, otomatis pecah kolom jika format titik koma */
+function normalizeTable(rows) {
+  if (!rows.length) return [];
+  const semi = rows[0].filter(v => v !== '').length === 1 && String(rows[0][0]).includes(';');
+  const table = semi ? rows.map(r => String(r[0]).split(';')) : rows;
+  const header = table[0].map(h => String(h).trim().toLowerCase());
+  return table.slice(1).map(r => { const o = {}; header.forEach((h, i) => { o[h] = r[i] ?? ''; }); return o; });
+}
+const pick = (o, ...keys) => { for (const k of keys) if (o[k] !== undefined && o[k] !== '') return o[k]; return ''; };
+
+async function fetchFile(url) {
+  const res = await fetch(url + '?v=' + Date.now(), { cache: 'no-store' });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return res;
+}
+
+async function loadSales(dt) {
+  const res = await fetchFile(dt.salesFile);
+  if (!res) return null;
+  let raw;
+  if (/\.csv$/i.test(dt.salesFile)) {
+    const text = await res.text();
+    raw = Papa.parse(text, { skipEmptyLines: true, delimiter: '' }).data;
+  } else raw = await xlsxToRows(await res.arrayBuffer());
+  const objs = normalizeTable(raw);
+  const rows = [];
+  objs.forEach(o => {
+    const date = toDate(pick(o, 'invdate', 'tanggal'));
+    const dsr = String(pick(o, 'salesman', 'kode_dsr')).trim();
+    if (!date || !dsr) return;
+    rows.push({
+      date, day: ymd(date), dsr,
+      dsrName: String(pick(o, 'salesmanenama', 'salesmanname', 'salesmannama', 'nama_dsr')).trim(),
+      outlet: String(pick(o, 'outlet')).trim(),
+      ret: /return|retur/i.test(pick(o, 'billing type')),
+      bu: normBU(pick(o, 'sub_division', 'bu')),
+      gsv: toNum(pick(o, 'gsv'))
+    });
+  });
+  if (!rows.length) throw new Error('Format file tidak dikenali');
+  return rows;
+}
+
+async function loadTargets(dt) {
+  const res = await fetchFile(dt.targetFile).catch(() => null);
+  const map = new Map();
+  if (!res) return map;
+  const parsed = Papa.parse(await res.text(), { header: true, skipEmptyLines: true });
+  const buSum = new Map();
+  parsed.data.forEach(r => {
+    const code = String(r.Kode_DSR ?? '').trim(), kpi = String(r.KPI ?? '').trim().toUpperCase();
+    const buRaw = String(r.BU ?? '').trim();
+    const t = toNum(r.Target);
+    if (!code || !kpi || !(t > 0)) return;
+    if (buRaw) {
+      const bu = normBU(buRaw);
+      map.set(code + '|' + kpi + '|' + bu, (map.get(code + '|' + kpi + '|' + bu) || 0) + t);
+      buSum.set(code + '|' + kpi, (buSum.get(code + '|' + kpi) || 0) + t);
+    } else map.set(code + '|' + kpi, t);
+  });
+  // Jika target total tidak diisi, total = jumlah target per BU
+  buSum.forEach((v, k) => { if (!map.has(k)) map.set(k, v); });
+  return map;
+}
+
+/* ===== 6. MUAT SEMUA DT (per DT terpisah) ===== */
+function showBanner(title, pct) {
+  $('loadTitle').textContent = title;
+  $('loadFill').style.width = Math.max(0, Math.min(100, pct)) + '%';
+  $('loadBanner').classList.add('show');
+}
+const hideBanner = () => $('loadBanner').classList.remove('show');
+
+function renderSkeleton() {
+  $('kpiGrid').innerHTML = KPIS.map(() => `
+    <div class="card">
+      <div class="sk sk-line" style="width:55%"></div>
+      <div class="sk sk-line" style="width:30%"></div>
+      <div class="sk sk-big"></div>
+      <div class="sk sk-line" style="width:80%"></div>
+      <div class="sk sk-line" style="height:7px"></div>
+      <div class="sk sk-line" style="height:30px"></div>
+    </div>`).join('');
+}
+
+async function loadAll() {
+  if (state.loading) return;
+  state.loading = true;
+  $('refreshBtn').classList.add('spin');
+  $('syncDot').className = 'sync-dot';
+  $('loadBadge').className = 'badge'; $('loadBadge').textContent = '⏳ Memuat…';
+  renderSkeleton();
+
+  const N = DTS.length;
+  for (let i = 0; i < N; i++) {
+    const dt = DTS[i];
+    showBanner(`Memuat data DT ${i + 1} dari ${N}: ${dt.name}…`, (i / N) * 100 + 5);
+    $('loadBadge').textContent = `⏳ Memuat ${i + 1}/${N} DT`;
+    await sleep(30);
+    try {
+      const rows = await loadSales(dt);
+      if (!rows) { state.data[dt.code] = { status: 'none' }; continue; }
+      const targets = await loadTargets(dt);
+      const dsrMap = new Map();
+      rows.forEach(r => { if (!dt.excludeDsr.includes(r.dsr) && !dsrMap.has(r.dsr)) dsrMap.set(r.dsr, r.dsrName); });
+      const dsrs = [...dsrMap.entries()].map(([code, name]) => ({ code, name, dt: dt.code }))
+        .sort((a, b) => a.code.localeCompare(b.code, 'id', { numeric: true }));
+      const lastDate = rows.reduce((m, r) => (r.date > m ? r.date : m), new Date(0));
+      state.data[dt.code] = { status: 'ok', rows, targets, dsrs, lastDate };
+    } catch (e) {
+      console.error(dt.name, e);
+      state.data[dt.code] = { status: 'err', error: e.message };
+    }
+  }
+  showBanner('Selesai memuat data', 100);
+
+  computeTime();
+  if (state.dt !== 'ALL' && !dtByCode(state.dt)) state.dt = 'ALL';
+  renderTabs(); renderDsrSelect(); renderDataDates(); render(false);
+
+  const ok = DTS.filter(d => state.data[d.code].status === 'ok').length;
+  const err = DTS.filter(d => state.data[d.code].status === 'err').length;
+  $('loadBadge').className = 'badge done';
+  $('loadBadge').textContent = `✓ ${ok} dari ${N} DT punya data` + (err ? ` · ${err} gagal` : '');
+  const now = new Date();
+  $('syncTime').textContent = `${String(now.getHours()).padStart(2, '0')}.${String(now.getMinutes()).padStart(2, '0')}`;
+  $('syncDot').className = 'sync-dot ' + (err ? 'err' : 'ok');
+  if (err) toast('Ada file DT yang gagal dibaca — cek format file');
+  setTimeout(hideBanner, 500);
+  state.loading = false;
+  $('refreshBtn').classList.remove('spin');
+}
+
+/* ===== 7. KALENDER & LAJU WAKTU ===== */
+function computeTime() {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const dates = DTS.map(d => state.data[d.code]).filter(x => x && x.status === 'ok').map(x => x.lastDate);
+  const last = dates.length ? new Date(Math.max(...dates)) : today;
+  const sameMonth = last.getFullYear() === today.getFullYear() && last.getMonth() === today.getMonth();
+  const ref = sameMonth ? (today > last ? today : last) : last;
+  const y = ref.getFullYear(), mo = ref.getMonth(), dim = new Date(y, mo + 1, 0).getDate();
+  let total = 0, passed = 0;
+  for (let d = 1; d <= dim; d++) { const dt = new Date(y, mo, d); if (isWorkday(dt)) { total++; if (d <= ref.getDate()) passed++; } }
+  state.laju = total ? passed / total : 0;
+  $('lajuValue').textContent = fmtPct(state.laju);
+  $('lajuSub').textContent = `hari kerja ke-${passed} dari ${total}`;
+  $('sisaValue').textContent = `${total - passed} hari`;
+  $('pageDate').textContent = `${HARI[today.getDay()]}, ${today.getDate()} ${BULAN[today.getMonth()]} ${today.getFullYear()} · Periode ${BULAN[mo]} ${y}`;
+}
+
+/* ===== 8. PERHITUNGAN KPI ===== */
+function scopeDts() { return state.dt === 'ALL' ? DTS : DTS.filter(d => d.code === state.dt); }
+function scopeDsrKey() { return state.dsr === 'ALL' ? null : state.dsr; } // format "DT|kode"
+
+function computeKpi(kpi) {
+  const result = { list: [], actual: 0, target: 0, nonDsr: 0, lastDate: null, hasData: false, bu: {} };
+  BUS.forEach(b => { result.bu[b.code] = { actual: 0, target: 0 }; });
+  const sel = scopeDsrKey();
+  scopeDts().forEach(dt => {
+    const D = state.data[dt.code];
+    if (!D || D.status !== 'ok') return;
+    if (sel && !sel.startsWith(dt.code + '|')) return;
+    result.hasData = true;
+    if (!result.lastDate || D.lastDate > result.lastDate) result.lastDate = D.lastDate;
+
+    const per = new Map(); // dsr → {actual, set}
+    const dtBills = new Set();
+    let dtOmset = 0;
+    const dtBu = {};
+    D.rows.forEach(r => {
+      if (sel && sel !== dt.code + '|' + r.dsr) return;
+      let p = per.get(r.dsr);
+      if (!p) { p = { actual: 0, bills: new Set(), bu: {} }; per.set(r.dsr, p); }
+      if (kpi.source === 'omset') {
+        p.actual += r.gsv; dtOmset += r.gsv;
+        p.bu[r.bu] = (p.bu[r.bu] || 0) + r.gsv;
+        dtBu[r.bu] = (dtBu[r.bu] || 0) + r.gsv;
+      }
+      else if (kpi.source === 'bills' && !r.ret && r.outlet) { const k = r.outlet + '|' + r.day; p.bills.add(k); dtBills.add(k); }
+    });
+
+    let dsrSum = 0;
+    D.dsrs.forEach(s => {
+      if (sel && sel !== dt.code + '|' + s.code) return;
+      const p = per.get(s.code) || { actual: 0, bills: new Set(), bu: {} };
+      const actual = kpi.source === 'bills' ? p.bills.size : p.actual;
+      const t = D.targets.get(s.code + '|' + kpi.code) || 0;
+      dsrSum += actual;
+      const bu = {};
+      BUS.forEach(b => {
+        const a = p.bu[b.code] || 0, bt = D.targets.get(s.code + '|' + kpi.code + '|' + b.code) || 0;
+        bu[b.code] = { actual: a, target: bt, ratio: bt ? a / bt : null };
+        result.bu[b.code].target += bt;
+        if (sel) result.bu[b.code].actual += a;
+      });
+      result.list.push({ code: s.code, name: s.name, dt: dt.code, actual, target: t, ratio: t ? actual / t : null, bu });
+    });
+
+    // Total DT: termasuk non-DSR (mis. Shopsales). Bills total = toko unik per hari se-DT.
+    const dtActual = sel ? dsrSum : (kpi.source === 'bills' ? dtBills.size : dtOmset);
+    result.actual += dtActual;
+    if (!sel) {
+      result.nonDsr += dtActual - dsrSum;
+      BUS.forEach(b => { result.bu[b.code].actual += dtBu[b.code] || 0; });   // termasuk non-DSR
+    }
+    const totalTarget = !sel && D.targets.get('TOTAL|' + kpi.code);
+    result.target += totalTarget || result.list.filter(p => p.dt === dt.code).reduce((s, p) => s + p.target, 0);
+  });
+  result.list.forEach(p => { p.incentive = kpi.incentive && p.ratio != null && p.ratio >= kpi.incentiveMin ? kpi.incentive : 0; });
+  result.list.sort((a, b) => (b.ratio ?? -1) - (a.ratio ?? -1) || b.actual - a.actual);
+  result.ratio = result.target ? result.actual / result.target : null;
+  BUS.forEach(b => { const x = result.bu[b.code]; x.ratio = x.target ? x.actual / x.target : null; });
+  result.incentive = result.list.reduce((s, p) => s + p.incentive, 0);
+  return result;
+}
+
+/* ===== 9. RENDER ===== */
+function renderTabs() {
+  const tabs = [{ code: 'ALL', name: 'Gabungan' }, ...DTS];
+  $('dtTabs').innerHTML = tabs.map(t => {
+    const st = t.code === 'ALL' ? null : (state.data[t.code] || {}).status;
+    const dot = st ? `<span class="tab-dot ${st === 'ok' ? '' : st === 'err' ? 'err' : 'off'}"></span>` : '';
+    return `<button type="button" role="tab" class="tab ${t.code === state.dt ? 'active' : ''}" data-dt="${esc(t.code)}" aria-selected="${t.code === state.dt}">${dot}${esc(t.name)}</button>`;
+  }).join('');
+}
+
+function renderDsrSelect() {
+  const list = [];
+  scopeDts().forEach(dt => { const D = state.data[dt.code]; if (D && D.status === 'ok') D.dsrs.forEach(s => list.push({ ...s, key: dt.code + '|' + s.code, dtShort: dt.short })); });
+  if (state.dsr !== 'ALL' && !list.some(d => d.key === state.dsr)) state.dsr = 'ALL';
+  const multi = state.dt === 'ALL';
+  $('dsrSelect').innerHTML = `<option value="ALL">Semua salesman (${list.length})</option>` +
+    list.map(d => `<option value="${esc(d.key)}" ${d.key === state.dsr ? 'selected' : ''}>${multi ? esc(d.dtShort) + ' · ' : ''}${esc(d.code)} - ${esc(d.name)}</option>`).join('');
+}
+
+function renderDataDates() {
+  $('dataDates').innerHTML = DTS.map(dt => {
+    const D = state.data[dt.code] || {};
+    const val = D.status === 'ok' ? shortDate(D.lastDate) : D.status === 'err' ? 'gagal baca' : 'belum ada';
+    return `<span class="${D.status === 'ok' ? '' : 'off'}">${esc(dt.short)} ${esc(val)}</span>`;
+  }).join('');
+}
+
+function scopeTitle() {
+  if (state.dsr !== 'ALL') {
+    const [dtc, code] = state.dsr.split('|');
+    const s = (state.data[dtc]?.dsrs || []).find(x => x.code === code);
+    return s ? `${s.name} (${code})` : 'Salesman';
+  }
+  if (state.dt === 'ALL') return `Gabungan ${DTS.length} distributor`;
+  return dtByCode(state.dt).name;
+}
+
+function pendingCard(kpi) {
+  return `
+  <article class="card pending s-none">
+    <div class="card-name">${esc(kpi.name)}</div>
+    <div class="card-date muted">Data s.d. -</div>
+    <div class="card-pct">—</div>
+    <div class="pending-note">Data belum tersedia. Sumber data KPI ini akan ditambahkan.</div>
+    <div class="basis">${esc(kpi.basis)}</div>
+  </article>`;
+}
+
+function cardHTML(kpi, r) {
+  if (!kpi.source) return pendingCard(kpi);
+  const st = statusOf(r.ratio);
+  const fmt = kpi.money ? fmtRp : fmtNum;
+  const hasT = r.target > 0;
+  const detail = kpi.money
+    ? `${fmtRp(r.actual)}${hasT ? `<br>dari ${fmtRp(r.target)}` : ''}`
+    : `${fmtNum(r.actual)}${hasT ? ` dari ${fmtNum(r.target)}` : ''} ${esc(kpi.unit)}`;
+  const showDt = state.dt === 'ALL';
+  const withBu = kpi.source === 'omset';
+  const cols = 5 + (showDt ? 1 : 0) + (state.showIncentive ? 1 : 0) + (withBu ? BUS.length : 0);
+  const buCell = x => x.target ? `<span class="pill ${statusOf(x.ratio)}">${fmtPct(x.ratio)}</span>` : (x.actual ? `<span class="bu-amt">${fmtJt(x.actual)}</span>` : '-');
+  const buBlock = !withBu ? '' : `
+    <div class="bu-list">
+      <div class="bu-head">Pencapaian per BU</div>
+      ${BUS.map(b => { const x = r.bu[b.code]; return `
+      <div class="bu-row ${statusOf(x.ratio)}">
+        <div class="bu-line"><span class="bu-name">${esc(b.short)}</span>
+          <span class="bu-val">${fmtJt(x.actual)}${x.target ? ' / ' + fmtJt(x.target) : ''}</span>
+          <span class="pill ${statusOf(x.ratio)}">${x.ratio == null ? '—' : fmtPct(x.ratio)}</span></div>
+        <div class="bar bar-sm"><div class="bar-fill" data-w="${x.ratio == null ? 0 : Math.min(100, Math.max(0, x.ratio * 100))}"></div></div>
+      </div>`; }).join('')}
+    </div>`;
+  const rowsHtml = r.list.length ? r.list.map((p, n) => `
+      <tr>
+        <td>${n + 1}</td>
+        <td>${esc(p.name)}</td>
+        ${showDt ? `<td>${esc(dtByCode(p.dt).short)}</td>` : ''}
+        <td class="num">${fmt(p.actual)}</td>
+        <td class="num">${p.target ? fmt(p.target) : '-'}</td>
+        <td class="num"><span class="pill ${statusOf(p.ratio)}">${p.ratio == null ? '—' : fmtPct(p.ratio)}</span></td>
+        ${withBu ? BUS.map(b => `<td class="num">${buCell(p.bu[b.code])}</td>`).join('') : ''}
+        ${state.showIncentive ? `<td class="num">${p.incentive ? fmtRp(p.incentive) : '-'}</td>` : ''}
+      </tr>`).join('') : `<tr><td colspan="${cols}" class="empty">Tidak ada data.</td></tr>`;
+  const nonDsrRow = r.nonDsr ? `<tr class="subtotal"><td></td><td>Non-DSR (Shopsales, dll.)</td>${showDt ? '<td></td>' : ''}<td class="num">${fmt(r.nonDsr)}</td><td></td><td></td>${withBu ? BUS.map(() => '<td></td>').join('') : ''}${state.showIncentive ? '<td></td>' : ''}</tr>` : '';
+  const incentiveHtml = !state.showIncentive ? '' : kpi.incentive
+    ? `<div class="incentive">Est. insentif: ${fmtRp(r.incentive)} (${r.list.filter(p => p.incentive).length} DSR lolos)</div>`
+    : `<div class="incentive">Skema insentif belum diatur</div>`;
+
+  return `
+  <article class="card ${st}${withBu ? ' has-bu' : ''}">
+    <div class="card-name">${esc(kpi.name)}</div>
+    <div class="card-date">Data s.d. ${shortDate(r.lastDate)}</div>
+    ${hasT ? `<div class="card-pct" data-target="${r.ratio}">0,0%</div>` : `<div class="card-pct">—</div>`}
+    <div class="card-detail">${detail}</div>
+    ${hasT ? '' : '<div class="pending-note">Target belum diisi di file target.</div>'}
+    <div class="bar"><div class="bar-fill" data-w="${hasT ? Math.min(100, Math.max(0, r.ratio * 100)) : 0}"></div></div>
+    ${buBlock}
+    <div class="basis">${esc(kpi.basis)}</div>
+    ${incentiveHtml}
+    <button type="button" class="detail-btn" aria-expanded="false">Klik di sini untuk lihat detail <span class="caret">▾</span></button>
+    <div class="acc"><div class="acc-inner">
+      <div class="table-wrap"><table>
+        <thead><tr><th>#</th><th>DSR</th>${showDt ? '<th>DT</th>' : ''}<th class="num">Actual</th><th class="num">Target</th><th class="num">%</th>${withBu ? BUS.map(b => `<th class="num">${esc(b.short)}</th>`).join('') : ''}${state.showIncentive ? '<th class="num">Insentif</th>' : ''}</tr></thead>
+        <tbody>${rowsHtml}${nonDsrRow}</tbody>
+      </table></div>
+    </div></div>
+  </article>`;
+}
+
+function animate() {
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    document.querySelectorAll('.bar-fill').forEach(b => { b.style.width = (b.dataset.w || 0) + '%'; });
+  }));
+  const els = [...document.querySelectorAll('.card-pct[data-target]')];
+  const start = performance.now(), dur = 800;
+  const step = now => {
+    const t = Math.min(1, (now - start) / dur), e = 1 - Math.pow(1 - t, 3);
+    els.forEach(el => { el.textContent = fmtPct((parseFloat(el.dataset.target) || 0) * e); });
+    if (t < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+function render(withFade = true) {
+  const grid = $('kpiGrid');
+  const draw = () => {
+    $('scopeTitle').textContent = scopeTitle();
+    const D = state.dt !== 'ALL' ? state.data[state.dt] : null;
+    const anyData = DTS.some(d => state.data[d.code]?.status === 'ok');
+    if ((D && D.status !== 'ok') || (!D && !anyData)) {
+      const dt = dtByCode(state.dt);
+      const msg = D && D.status === 'err'
+        ? `<b>File data ${esc(dt.name)} gagal dibaca</b>Pastikan file adalah export "UID Extract Secondary Sale Data Report" (${esc(D.error)}).`
+        : dt ? `<b>Data ${esc(dt.name)} belum tersedia</b>Upload file export ke <code>${esc(dt.salesFile)}</code> lalu klik tombol refresh.`
+             : `<b>Belum ada data DT</b>Upload file export ke folder <code>data/</code>.`;
+      grid.innerHTML = `<div class="empty-dt">${msg}</div>` + KPIS.map(pendingCard).join('');
+    } else {
+      grid.innerHTML = KPIS.map(k => cardHTML(k, k.source ? computeKpi(k) : null)).join('');
+    }
+    grid.classList.remove('fading');
+    animate();
+  };
+  if (withFade) { grid.classList.add('fading'); setTimeout(draw, 200); } else draw();
+}
+
+/* ===== 10. EVENT ===== */
+function bindEvents() {
+  $('dtTabs').addEventListener('click', e => {
+    const b = e.target.closest('.tab'); if (!b || b.dataset.dt === state.dt || state.loading) return;
+    state.dt = b.dataset.dt; state.dsr = 'ALL';
+    renderTabs(); renderDsrSelect(); render();
+  });
+  $('dsrSelect').addEventListener('change', e => { state.dsr = e.target.value; render(); });
+  $('incentiveChk').addEventListener('change', e => { state.showIncentive = e.target.checked; render(); });
+  $('kpiGrid').addEventListener('click', e => {
+    const b = e.target.closest('.detail-btn'); if (!b) return;
+    const open = b.closest('.card').classList.toggle('open');
+    b.setAttribute('aria-expanded', open);
+  });
+  $('refreshBtn').addEventListener('click', loadAll);
+  $('fsBtn').addEventListener('click', () => {
+    if (!document.fullscreenElement) {
+      (document.documentElement.requestFullscreen ? document.documentElement.requestFullscreen() : Promise.reject())
+        .catch(() => toast('Browser tidak mendukung layar penuh'));
+    } else document.exitFullscreen();
+  });
+  document.addEventListener('fullscreenchange', () => {
+    $('fsLabel').textContent = document.fullscreenElement ? 'Keluar layar penuh' : 'Layar penuh';
+  });
+  const closeSide = () => { $('sidebar').classList.remove('open'); $('overlay').classList.remove('show'); };
+  $('menuBtn').addEventListener('click', () => { $('sidebar').classList.add('open'); $('overlay').classList.add('show'); });
+  $('overlay').addEventListener('click', closeSide);
+  document.querySelectorAll('.nav-item').forEach(n => n.addEventListener('click', () => {
+    document.querySelectorAll('.nav-item').forEach(x => x.classList.remove('active'));
+    n.classList.add('active');
+    if (n.dataset.page !== 'Dashboard') toast(`Halaman "${n.dataset.page}" segera hadir`);
+    closeSide();
+  }));
+}
+
+/* ===== 11. MULAI ===== */
+document.addEventListener('DOMContentLoaded', () => {
+  $('appName').textContent = CONFIG.appName;
+  $('appNameMobile').textContent = CONFIG.appName;
+  $('userRole').textContent = CONFIG.userRole;
+  $('userName').textContent = CONFIG.userName;
+  document.title = CONFIG.appName;
+  if (window.lucide) lucide.createIcons();
+  bindEvents();
+  loadAll();
+});
