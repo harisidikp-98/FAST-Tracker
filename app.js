@@ -13,6 +13,8 @@ const CONFIG = {
   userName: 'HARI SIDIK PRAMONO',       // UBAH: nama user
   // UBAH: libur nasional (YYYY-MM-DD) — dikecualikan dari hari kerja (Senin–Sabtu)
   holidays: ['2026-12-25'],
+  // UBAH: file Perfect Store (1 file untuk semua DT, template "TABLE PERFECT STORE BY STORE")
+  psFile: 'data/perfect_store.xlsx',
   greenMin: 1.0,   // pencapaian ≥ 100% laju waktu → hijau
   yellowMin: 0.8   // 80–99% laju waktu → kuning; di bawahnya merah
 };
@@ -23,8 +25,8 @@ const CONFIG = {
    excludeDsr: kode salesman yang BUKAN DSR (tidak tampil di daftar DSR,
                tapi angkanya tetap masuk total DT), contoh Shopsales = '00'  */
 const DTS = [
-  { code: 'CAS',    name: 'CV. Citra Anugrah Sejahtera', short: 'Citra Anugrah', salesFile: 'data/citra_anugrah.xlsx', targetFile: 'data/target_citra_anugrah.csv', excludeDsr: ['00'] },
-  { code: 'NAICOM', name: 'CV. Naicom Mandiri',          short: 'Naicom',        salesFile: 'data/naicom.xlsx',        targetFile: 'data/target_naicom.csv',        excludeDsr: ['00'],
+  { code: 'CAS', distCode: '15480165',    name: 'CV. Citra Anugrah Sejahtera', short: 'Citra Anugrah', salesFile: 'data/citra_anugrah.xlsx', targetFile: 'data/target_citra_anugrah.csv', excludeDsr: ['00'] },
+  { code: 'NAICOM', distCode: '15153832', name: 'CV. Naicom Mandiri',          short: 'Naicom',        salesFile: 'data/naicom.xlsx',        targetFile: 'data/target_naicom.csv',        excludeDsr: ['00'],
     // UBAH: tipe DSR. Nama harus sama dengan kolom SalesmaneNama (huruf besar/kecil bebas).
     // DSR yang tidak tercantum otomatis dianggap GT.
     dsrType: {
@@ -36,8 +38,8 @@ const DTS = [
       { PC: 'AGUS TRIYADI', BW: 'AGUS TRIYADI', HC: 'LIUS', FOODS: 'LIUS' }
     ]
   },
-  { code: 'ACP',    name: 'PT. Aditama Citra Papua',     short: 'Aditama',       salesFile: 'data/aditama.xlsx',       targetFile: 'data/target_aditama.csv',       excludeDsr: ['00'] },
-  { code: 'KKK',    name: 'CV. Karya Kasih Karunia',     short: 'Karya Kasih',   salesFile: 'data/karya_kasih.xlsx',   targetFile: 'data/target_karya_kasih.csv',   excludeDsr: ['00'] }
+  { code: 'ACP', distCode: '15168386',    name: 'PT. Aditama Citra Papua',     short: 'Aditama',       salesFile: 'data/aditama.xlsx',       targetFile: 'data/target_aditama.csv',       excludeDsr: ['00'] },
+  { code: 'KKK', distCode: '15420177',    name: 'CV. Karya Kasih Karunia',     short: 'Karya Kasih',   salesFile: 'data/karya_kasih.xlsx',   targetFile: 'data/target_karya_kasih.csv',   excludeDsr: ['00'] }
 ];
 /* Tipe DSR (urutan tampil) */
 const TYPES = [
@@ -59,11 +61,13 @@ function typeOfDsr(dt, name) {
 const KPIS = [
   { code: 'OMSET', name: 'Omset (SSV)',        source: 'omset', money: true,  unit: '',     basis: 'Dasar: GSV (retur mengurangi omset) · target omset DSR 100%', incentive: 0, incentiveMin: 1.0 },
   { code: 'BILLS', name: 'Bills Productivity', source: 'bills', money: false, unit: 'bill', basis: 'Dasar: 1 bill = 1 toko unik belanja per hari',                 incentive: 0, incentiveMin: 1.0 },
-  { code: 'AVAIL', name: 'Availability',       source: null,    money: false, unit: '',     basis: 'Batas: 40% slab bawah · 60% slab atas',                         incentive: 0, incentiveMin: 0.4 },
-  { code: 'DIGI',  name: 'Digitization',       source: null,    money: false, unit: '',     basis: 'Batas: 40% dari outlet panel',                                  incentive: 0, incentiveMin: 0.4 },
-  { code: 'PS',    name: 'Perfect Store',      source: null,    money: false, unit: '',     basis: 'Target tim: 50% outlet panel perfect',                          incentive: 0, incentiveMin: 0.5 },
+  { code: 'AVAIL', name: 'Availability',       source: 'avail',   money: false, unit: 'toko panel', basis: 'Dasar: toko Perfect Availability ÷ total store panel (DSR GT)', incentive: 0, incentiveMin: 0.4 },
+  { code: 'DIGI',  name: 'Digitization',       source: 'digi',    money: false, unit: 'toko panel', basis: 'Dasar: toko Perfect Digitization ÷ total store panel (DSR GT)', incentive: 0, incentiveMin: 0.4 },
+  { code: 'PS',    name: 'Perfect Store',      source: 'perfect', money: false, unit: 'toko panel', basis: 'PS FULL (TOP 30K): Avail + Visib + Digi · PS LITE (TOP 100K): Avail + Visib atau Avail + Digi', incentive: 0, incentiveMin: 0.5 },
   { code: 'HYG',   name: 'Hygiene (DSR)',      source: null,    money: false, unit: '',     basis: 'KPI DSS: Hygiene Factor DSR ≥ 75%',                             incentive: 0, incentiveMin: 0.75 }
 ];
+
+const PS_SRC = ['avail', 'digi', 'perfect'];   // KPI dari file Perfect Store
 
 /* ===== 3b. DAFTAR BU — UBAH =====
    BU dibaca dari kolom "Sub_division" di file export.
@@ -81,7 +85,7 @@ function normBU(v) {
 }
 
 /* ===== 4. STATE & UTIL ===== */
-const state = { data: {}, dt: 'ALL', dsr: 'ALL', showIncentive: false, laju: 0, loading: false };
+const state = { data: {}, ps: { status: 'none', rows: [], date: null }, dt: 'ALL', dsr: 'ALL', showIncentive: false, laju: 0, loading: false };
 const $ = id => document.getElementById(id);
 const nf = new Intl.NumberFormat('id-ID');
 const fmtNum = n => nf.format(Math.round(n || 0));
@@ -137,7 +141,7 @@ function toast(msg) {
    Parser ini juga mendukung xlsx biasa (banyak kolom) dan CSV.  */
 const decodeXml = s => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'")
   .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n)).replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16))).replace(/&amp;/g, '&');
-const textOf = xml => { let out = '', m; const re = /<t\b[^>]*>([\s\S]*?)<\/t>/g; while ((m = re.exec(xml))) out += m[1]; return decodeXml(out); };
+const textOf = xml => { let out = '', m; const re = /<(?:\w+:)?t\b[^>]*>([\s\S]*?)<\/(?:\w+:)?t>/g; while ((m = re.exec(xml))) out += m[1]; return decodeXml(out); };
 const colIndex = ref => { const l = (/^[A-Z]+/.exec(ref || 'A') || ['A'])[0]; let n = 0; for (const ch of l) n = n * 26 + ch.charCodeAt(0) - 64; return n - 1; };
 
 async function xlsxToRows(buf) {
@@ -147,12 +151,12 @@ async function xlsxToRows(buf) {
   let shared = [];
   if (zip.file('xl/sharedStrings.xml')) {
     const ss = await zip.file('xl/sharedStrings.xml').async('string');
-    const re = /<si\b[^>]*>([\s\S]*?)<\/si>/g; let m;
+    const re = /<(?:\w+:)?si\b[^>]*>([\s\S]*?)<\/(?:\w+:)?si>/g; let m;
     while ((m = re.exec(ss))) shared.push(textOf(m[1]));
   }
   const xml = await zip.file(sheetPath).async('string');
   const rows = [];
-  const rowRe = /<row\b[^>]*>([\s\S]*?)<\/row>/g, cellRe = /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
+  const rowRe = /<(?:\w+:)?row\b[^>]*>([\s\S]*?)<\/(?:\w+:)?row>/g, cellRe = /<(?:\w+:)?c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:\w+:)?c>)/g;
   let rm;
   while ((rm = rowRe.exec(xml))) {
     const row = []; let cm, auto = 0;
@@ -164,10 +168,10 @@ async function xlsxToRows(buf) {
       const type = (/\bt="(\w+)"/.exec(attrs) || [])[1];
       let val = '';
       if (type === 'inlineStr') val = textOf(body);
-      else { const v = (/<v>([\s\S]*?)<\/v>/.exec(body) || [])[1] || ''; val = type === 's' ? (shared[+v] || '') : decodeXml(v); }
+      else { const v = (/<(?:\w+:)?v>([\s\S]*?)<\/(?:\w+:)?v>/.exec(body) || [])[1] || ''; val = type === 's' ? (shared[+v] || '') : decodeXml(v); }
       row[idx] = val;
     }
-    if (row.some(v => String(v ?? '').trim() !== '')) rows.push(row.map(v => v ?? ''));
+    if (row.some(v => String(v ?? '').trim() !== '')) rows.push(Array.from(row, v => v ?? ''));
   }
   return rows;
 }
@@ -238,6 +242,64 @@ async function loadTargets(dt) {
   return map;
 }
 
+/* ===== 5b. PERFECT STORE (1 file untuk semua DT) =====
+   Kolom: Month, Distributor Code&Name, Outlet Code&Name, DSR Name,
+   Status Panel - PS Type, Total Store Panel, Perfect Availability,
+   Perfect Visibility, Perfect Digitization                              */
+function parsePsDsr(s) {
+  // "15153832-28 - AGUS TRIYADI & 15153832-29 - LIUS" → [{code:'28', name:'AGUS TRIYADI'}, ...]
+  return String(s || '').split(/\s*&\s*(?=\d+-)/).map(p => {
+    const m = /^\s*\d+-(\w+)\s*-\s*(.+?)\s*$/.exec(p);
+    return m ? { code: m[1], name: m[2] } : null;
+  }).filter(Boolean);
+}
+async function loadPerfectStore() {
+  const res = await fetchFile(CONFIG.psFile);
+  if (!res) return { status: 'none', rows: [], date: null };
+  const lm = res.headers.get('Last-Modified');
+  const objs = normalizeTable(await xlsxToRows(await res.arrayBuffer()));
+  const rows = [];
+  objs.forEach(o => {
+    const outlet = String(pick(o, 'outlet code&name')).trim();
+    const dist = String(pick(o, 'distributor code&name')).trim();
+    if (!outlet || !dist) return;                       // lewati baris Total & keterangan filter
+    const one = k => toNum(pick(o, k)) >= 1;
+    rows.push({
+      distCode: (/^\d+/.exec(dist) || [''])[0],
+      outlet,
+      dsrs: parsePsDsr(pick(o, 'dsr name')),
+      full: /FULL/i.test(pick(o, 'status panel - ps type')),
+      panel: toNum(pick(o, 'total store panel')),
+      pa: one('perfect availability'),
+      pv: one('perfect visibility'),
+      pd: one('perfect digitization')
+    });
+  });
+  if (!rows.length) throw new Error('Format file Perfect Store tidak dikenali');
+  return { status: 'ok', rows, date: lm ? new Date(lm) : new Date() };
+}
+function psAchieved(r, src) {
+  if (src === 'avail') return r.pa;
+  if (src === 'digi') return r.pd;
+  return r.full ? (r.pa && r.pv && r.pd) : (r.pa && (r.pv || r.pd));   // perfect store
+}
+/* Tempelkan data PS ke tiap DT + tambahkan DSR yang hanya ada di file PS */
+function attachPerfectStore(dt) {
+  const D = state.data[dt.code] || (state.data[dt.code] = { status: 'none' });
+  D.dsrs = D.dsrs || [];
+  D.ps = state.ps.rows.filter(r => r.distCode === dt.distCode);
+  const byName = new Map(D.dsrs.map(s => [up(s.name), s]));
+  D.ps.forEach(r => r.dsrs.forEach(x => {
+    if (!byName.has(up(x.name)) && !D.dsrs.some(s => s.code === x.code)) {
+      const s = { code: x.code, name: x.name, dt: dt.code, type: typeOfDsr(dt, x.name), psOnly: true };
+      D.dsrs.push(s); byName.set(up(x.name), s);
+    }
+  }));
+  D.ps.forEach(r => { r.codes = [...new Set(r.dsrs.map(x => (byName.get(up(x.name)) || D.dsrs.find(s => s.code === x.code))?.code).filter(Boolean))]; });
+  D.dsrs.sort((a, b) => a.code.localeCompare(b.code, 'id', { numeric: true }));
+}
+const hasAny = D => !!D && (D.status === 'ok' || (D.ps && D.ps.length > 0));
+
 /* ===== 6. MUAT SEMUA DT (per DT terpisah) ===== */
 function showBanner(title, pct) {
   $('loadTitle').textContent = title;
@@ -267,6 +329,9 @@ async function loadAll() {
   renderSkeleton();
 
   const N = DTS.length;
+  showBanner('Memuat data Perfect Store…', 3);
+  try { state.ps = await loadPerfectStore(); }
+  catch (e) { console.error('Perfect Store', e); state.ps = { status: 'err', rows: [], date: null, error: e.message }; }
   for (let i = 0; i < N; i++) {
     const dt = DTS[i];
     showBanner(`Memuat data DT ${i + 1} dari ${N}: ${dt.name}…`, (i / N) * 100 + 5);
@@ -287,6 +352,7 @@ async function loadAll() {
       state.data[dt.code] = { status: 'err', error: e.message };
     }
   }
+  DTS.forEach(attachPerfectStore);
   showBanner('Selesai memuat data', 100);
 
   computeTime();
@@ -294,9 +360,10 @@ async function loadAll() {
   renderTabs(); renderDsrSelect(); renderDataDates(); render(false);
 
   const ok = DTS.filter(d => state.data[d.code].status === 'ok').length;
-  const err = DTS.filter(d => state.data[d.code].status === 'err').length;
+  const err = DTS.filter(d => state.data[d.code].status === 'err').length + (state.ps.status === 'err' ? 1 : 0);
   $('loadBadge').className = 'badge done';
-  $('loadBadge').textContent = `✓ ${ok} dari ${N} DT punya data` + (err ? ` · ${err} gagal` : '');
+  $('loadBadge').textContent = `✓ ${ok} dari ${N} DT punya data` + (err ? ` · ${err} gagal` : '')
+    + ` · Perfect Store ${state.ps.status === 'ok' ? '✓' : state.ps.status === 'err' ? 'gagal' : 'belum ada'}`;
   const now = new Date();
   $('syncTime').textContent = `${String(now.getHours()).padStart(2, '0')}.${String(now.getMinutes()).padStart(2, '0')}`;
   $('syncDot').className = 'sync-dot ' + (err ? 'err' : 'ok');
@@ -340,7 +407,7 @@ function finishAgg(o, isBills) {
   return o;
 }
 
-function computeKpi(kpi) {
+function computeSalesKpi(kpi) {
   const isBills = kpi.source === 'bills', isOmset = kpi.source === 'omset';
   const total = emptyAgg();
   const groups = {}; TYPES.forEach(t => { groups[t.code] = emptyAgg(); });
@@ -404,6 +471,7 @@ function computeKpi(kpi) {
 
     D.dsrs.forEach(s => {
       if (selCode && s.code !== selCode) return;
+      if (s.psOnly && !per.has(s.code)) return;   // DSR hanya ada di file Perfect Store
       const p = per.get(s.code) || emptyAgg();
       const actual = isBills ? p.bills.size : p.actual;
       const t = D.targets.get(s.code + '|' + kpi.code) || 0;
@@ -435,11 +503,62 @@ function computeKpi(kpi) {
   return result;
 }
 
+/* --- KPI dari file Perfect Store: Availability, Digitization, Perfect Store ---
+   Toko split (2 DSR) dihitung di masing-masing DSR, 1 kali di total. */
+function computePsKpi(kpi) {
+  const src = kpi.source;
+  const total = emptyAgg();
+  const groups = {}; TYPES.forEach(t => { groups[t.code] = emptyAgg(); });
+  const result = { list: [], nonDsr: 0, nonDsrTarget: 0, lastDate: state.ps.date, hasData: false,
+    psType: { full: { actual: 0, target: 0 }, lite: { actual: 0, target: 0 } } };
+  const sel = scopeDsrKey();
+  const selCode = sel ? sel.split('|')[1] : null;
+  scopeDts().forEach(dt => {
+    const D = state.data[dt.code];
+    if (!D || !D.ps || !D.ps.length) return;
+    if (sel && !sel.startsWith(dt.code + '|')) return;
+    result.hasData = true;
+    const per = new Map();
+    D.ps.forEach(r => {
+      if (selCode && !r.codes.includes(selCode)) return;
+      const ok = psAchieved(r, src) ? 1 : 0;
+      total.actual += ok; total.target += r.panel;
+      const tp = result.psType[r.full ? 'full' : 'lite']; tp.actual += ok; tp.target += r.panel;
+      const codes = selCode ? [selCode] : r.codes;
+      const types = new Set();
+      codes.forEach(c => {
+        const s = D.dsrs.find(x => x.code === c); if (!s) return;
+        let p = per.get(c); if (!p) { p = { actual: 0, target: 0 }; per.set(c, p); }
+        p.actual += ok; p.target += r.panel; types.add(s.type);
+      });
+      types.forEach(t => { if (groups[t]) { groups[t].actual += ok; groups[t].target += r.panel; } });
+      if (!codes.length) { result.nonDsr += ok; result.nonDsrTarget += r.panel; }
+    });
+    D.dsrs.forEach(s => {
+      const p = per.get(s.code); if (!p) return;
+      result.list.push({ code: s.code, name: s.name, dt: dt.code, type: s.type, actual: p.actual, target: p.target, ratio: p.target ? p.actual / p.target : null, bu: {} });
+    });
+  });
+  finishAgg(total, false);
+  TYPES.forEach(t => finishAgg(groups[t.code], false));
+  ['full', 'lite'].forEach(k => { const x = result.psType[k]; x.ratio = x.target ? x.actual / x.target : null; });
+  result.list.forEach(p => { p.incentive = kpi.incentive && p.ratio != null && p.ratio >= kpi.incentiveMin ? kpi.incentive : 0; });
+  result.list.sort((a, b) => TYPES.findIndex(t => t.code === a.type) - TYPES.findIndex(t => t.code === b.type)
+    || (b.ratio ?? -1) - (a.ratio ?? -1) || b.actual - a.actual);
+  Object.assign(result, { actual: total.actual, target: total.target, ratio: total.ratio, bu: total.bu, groups });
+  result.incentive = result.list.reduce((s, p) => s + p.incentive, 0);
+  return result;
+}
+function computeKpi(kpi) {
+  return PS_SRC.includes(kpi.source) ? computePsKpi(kpi) : computeSalesKpi(kpi);
+}
+
 /* ===== 9. RENDER ===== */
 function renderTabs() {
   const tabs = [{ code: 'ALL', name: 'Gabungan' }, ...DTS];
   $('dtTabs').innerHTML = tabs.map(t => {
-    const st = t.code === 'ALL' ? null : (state.data[t.code] || {}).status;
+    const D0 = state.data[t.code] || {};
+    const st = t.code === 'ALL' ? null : (hasAny(D0) ? 'ok' : D0.status);
     const dot = st ? `<span class="tab-dot ${st === 'ok' ? '' : st === 'err' ? 'err' : 'off'}"></span>` : '';
     return `<button type="button" role="tab" class="tab ${t.code === state.dt ? 'active' : ''}" data-dt="${esc(t.code)}" aria-selected="${t.code === state.dt}">${dot}${esc(t.name)}</button>`;
   }).join('');
@@ -447,7 +566,7 @@ function renderTabs() {
 
 function renderDsrSelect() {
   const list = [];
-  scopeDts().forEach(dt => { const D = state.data[dt.code]; if (D && D.status === 'ok') D.dsrs.forEach(s => list.push({ ...s, key: dt.code + '|' + s.code, dtShort: dt.short })); });
+  scopeDts().forEach(dt => { const D = state.data[dt.code]; if (D && D.dsrs) D.dsrs.forEach(s => list.push({ ...s, key: dt.code + '|' + s.code, dtShort: dt.short })); });
   if (state.dsr !== 'ALL' && !list.some(d => d.key === state.dsr)) state.dsr = 'ALL';
   const multi = state.dt === 'ALL';
   $('dsrSelect').innerHTML = `<option value="ALL">Semua salesman (${list.length})</option>` +
@@ -459,7 +578,7 @@ function renderDataDates() {
     const D = state.data[dt.code] || {};
     const val = D.status === 'ok' ? shortDate(D.lastDate) : D.status === 'err' ? 'gagal baca' : 'belum ada';
     return `<span class="${D.status === 'ok' ? '' : 'off'}">${esc(dt.short)} ${esc(val)}</span>`;
-  }).join('');
+  }).join('') + `<span class="ps-date">Perfect Store: ${state.ps.status === 'ok' ? 'update ' + shortDate(state.ps.date) : state.ps.status === 'err' ? 'gagal baca' : 'belum ada'}</span>`;
 }
 
 function scopeTitle() {
@@ -472,19 +591,23 @@ function scopeTitle() {
   return dtByCode(state.dt).name;
 }
 
-function pendingCard(kpi) {
+function pendingCard(kpi, note) {
   return `
   <article class="card pending s-none">
     <div class="card-name">${esc(kpi.name)}</div>
     <div class="card-date muted">Data s.d. -</div>
     <div class="card-pct">—</div>
-    <div class="pending-note">Data belum tersedia. Sumber data KPI ini akan ditambahkan.</div>
+    <div class="pending-note">${note || 'Data belum tersedia. Sumber data KPI ini akan ditambahkan.'}</div>
     <div class="basis">${esc(kpi.basis)}</div>
   </article>`;
 }
 
 function cardHTML(kpi, r) {
   if (!kpi.source) return pendingCard(kpi);
+  const isPs = PS_SRC.includes(kpi.source);
+  if (!r || !r.hasData) return pendingCard(kpi, isPs
+    ? (state.ps.status === 'err' ? `File Perfect Store gagal dibaca (${esc(state.ps.error)}).` : state.ps.status === 'none' ? `Data belum tersedia. Upload file ke <code>${esc(CONFIG.psFile)}</code>.` : 'Tidak ada toko panel untuk pilihan ini.')
+    : 'Data sales belum tersedia untuk DT ini.');
   const st = statusOf(r.ratio);
   const fmt = kpi.money ? fmtRp : fmtNum;
   const fmtShort = kpi.money ? fmtJt : fmtNum;
@@ -555,23 +678,37 @@ function cardHTML(kpi, r) {
     rowsHtml += items.map((p, i) => dsrRow(p, i + 1)).join('');
   });
   if (!rowsHtml) rowsHtml = `<tr><td colspan="${cols}" class="empty">Tidak ada data.</td></tr>`;
-  const nonDsrRow = r.nonDsr ? `<tr class="subtotal"><td></td><td>Non-DSR (Shopsales, dll.)</td>${showDt ? '<td></td>' : ''}<td class="num">${fmt(r.nonDsr)}</td><td></td><td></td>${withBu ? BUS.map(() => '<td></td>').join('') : ''}${state.showIncentive ? '<td></td>' : ''}</tr>` : '';
+  const nonDsrRow = (r.nonDsr || r.nonDsrTarget) ? `<tr class="subtotal"><td></td><td>${isPs ? 'Toko tanpa DSR' : 'Non-DSR (Shopsales, dll.)'}</td>${showDt ? '<td></td>' : ''}<td class="num">${fmt(r.nonDsr)}</td><td class="num">${r.nonDsrTarget ? fmt(r.nonDsrTarget) : ''}</td><td></td>${withBu ? BUS.map(() => '<td></td>').join('') : ''}${state.showIncentive ? '<td></td>' : ''}</tr>` : '';
   const totalRow = state.dsr === 'ALL' && r.list.length ? groupRow('TOTAL', r).replace('class="grp"', 'class="grp grp-total"') : '';
   const incentiveHtml = !state.showIncentive ? '' : kpi.incentive
     ? `<div class="incentive">Est. insentif: ${fmtRp(r.incentive)} (${r.list.filter(p => p.incentive).length} DSR lolos)</div>`
     : `<div class="incentive">Skema insentif belum diatur</div>`;
-  const splitNote = withBu && scopeDts().some(d => d.split) ? `<div class="split-note">Salesman split: omset BU dialihkan ke DSR pemegang BU.</div>` : '';
+  const splitNote = withBu && scopeDts().some(d => d.split) ? `<div class="split-note">Salesman split: omset BU dialihkan ke DSR pemegang BU.</div>`
+    : isPs ? `<div class="split-note">Toko split (2 DSR) dihitung di masing-masing DSR, 1 kali di total.</div>` : '';
+  // Perfect Store: rincian per tipe panel (FULL / LITE)
+  const psTypeBlock = kpi.source !== 'perfect' ? '' : `
+    <div class="bu-list">
+      <div class="bu-head">Per tipe panel</div>
+      ${[['FULL', r.psType.full], ['LITE', r.psType.lite]].map(([lb, x]) => `
+      <div class="bu-row ${statusOf(x.ratio)}">
+        <div class="bu-line"><span class="bu-name">${lb}</span>
+          <span class="bu-val">${fmtNum(x.actual)}${x.target ? ' / ' + fmtNum(x.target) : ''}</span>
+          <span class="pill ${statusOf(x.ratio)}">${pct(x)}</span></div>
+        <div class="bar bar-sm"><div class="bar-fill" data-w="${barW(x)}"></div></div>
+      </div>`).join('')}
+    </div>`;
 
   return `
   <article class="card ${st}${withBu ? ' has-bu' : ''}">
     <div class="card-name">${esc(kpi.name)}</div>
-    <div class="card-date">Data s.d. ${shortDate(r.lastDate)}</div>
+    <div class="card-date">${isPs ? 'Update' : 'Data s.d.'} ${shortDate(r.lastDate)}</div>
     ${hasT ? `<div class="card-pct" data-target="${r.ratio}">0,0%</div>` : `<div class="card-pct">—</div>`}
     <div class="card-detail">${detail}</div>
-    ${hasT ? '' : '<div class="pending-note">Target belum diisi di file target.</div>'}
+    ${hasT ? '' : `<div class="pending-note">${isPs ? 'Tidak ada toko panel.' : 'Target belum diisi di file target.'}</div>`}
     <div class="bar"><div class="bar-fill" data-w="${hasT ? barW(r) : 0}"></div></div>
     ${segBlock}
     ${buBlock}
+    ${psTypeBlock}
     <div class="basis">${esc(kpi.basis)}</div>
     ${splitNote}
     ${incentiveHtml}
@@ -579,7 +716,7 @@ function cardHTML(kpi, r) {
     <div class="acc"><div class="acc-inner">
       <div class="acc-tools"><button type="button" class="expand-btn" data-title="${esc(kpi.name)}" aria-label="Lihat tabel ${esc(kpi.name)} layar penuh">⛶ Lihat layar penuh</button></div>
       <div class="table-wrap"><table>
-        <thead><tr><th>#</th><th>DSR</th>${showDt ? '<th>DT</th>' : ''}<th class="num">Actual</th><th class="num">Target</th><th class="num">%</th>${withBu ? BUS.map(b => `<th class="num">${esc(b.short)}</th>`).join('') : ''}${state.showIncentive ? '<th class="num">Insentif</th>' : ''}</tr></thead>
+        <thead><tr><th>#</th><th>DSR</th>${showDt ? '<th>DT</th>' : ''}<th class="num">${isPs ? 'Tercapai' : 'Actual'}</th><th class="num">${isPs ? 'Panel' : 'Target'}</th><th class="num">%</th>${withBu ? BUS.map(b => `<th class="num">${esc(b.short)}</th>`).join('') : ''}${state.showIncentive ? '<th class="num">Insentif</th>' : ''}</tr></thead>
         <tbody>${rowsHtml}${nonDsrRow}${totalRow}</tbody>
       </table></div>
     </div></div>
@@ -605,14 +742,14 @@ function render(withFade = true) {
   const draw = () => {
     $('scopeTitle').textContent = scopeTitle();
     const D = state.dt !== 'ALL' ? state.data[state.dt] : null;
-    const anyData = DTS.some(d => state.data[d.code]?.status === 'ok');
-    if ((D && D.status !== 'ok') || (!D && !anyData)) {
+    const anyData = DTS.some(d => hasAny(state.data[d.code]));
+    if ((D && !hasAny(D)) || (!D && !anyData)) {
       const dt = dtByCode(state.dt);
       const msg = D && D.status === 'err'
         ? `<b>File data ${esc(dt.name)} gagal dibaca</b>Pastikan file adalah export "UID Extract Secondary Sale Data Report" (${esc(D.error)}).`
         : dt ? `<b>Data ${esc(dt.name)} belum tersedia</b>Upload file export ke <code>${esc(dt.salesFile)}</code> lalu klik tombol refresh.`
              : `<b>Belum ada data DT</b>Upload file export ke folder <code>data/</code>.`;
-      grid.innerHTML = `<div class="empty-dt">${msg}</div>` + KPIS.map(pendingCard).join('');
+      grid.innerHTML = `<div class="empty-dt">${msg}</div>` + KPIS.map(k => pendingCard(k)).join('');
     } else {
       grid.innerHTML = KPIS.map(k => cardHTML(k, k.source ? computeKpi(k) : null)).join('');
     }

@@ -278,3 +278,5 @@ tr.grp-total td { background: #e2e8f0; color: var(--ink); }
 .tmodal-body th, .tmodal-body td { padding: 10px 14px; }
 .tmodal-body th { font-size: 12px; }
 @media (max-width: 640px) { .tmodal { padding: 0; } .tmodal-box { border-radius: 0; max-height: 100vh; } .tmodal-body table { font-size: 12px; } .tmodal-body th, .tmodal-body td { padding: 8px 10px; } }
+/* ===== Perfect Store: tanggal update di kartu "Data s.d." ===== */
+.info-dates .ps-date { grid-column: 1 / -1; color: #0c4a6e; border-top: 1px dashed var(--line); padding-top: 3px; margin-top: 2px; }
