@@ -24,10 +24,32 @@ const CONFIG = {
                tapi angkanya tetap masuk total DT), contoh Shopsales = '00'  */
 const DTS = [
   { code: 'CAS',    name: 'CV. Citra Anugrah Sejahtera', short: 'Citra Anugrah', salesFile: 'data/citra_anugrah.xlsx', targetFile: 'data/target_citra_anugrah.csv', excludeDsr: ['00'] },
-  { code: 'NAICOM', name: 'CV. Naicom Mandiri',          short: 'Naicom',        salesFile: 'data/naicom.xlsx',        targetFile: 'data/target_naicom.csv',        excludeDsr: ['00'] },
+  { code: 'NAICOM', name: 'CV. Naicom Mandiri',          short: 'Naicom',        salesFile: 'data/naicom.xlsx',        targetFile: 'data/target_naicom.csv',        excludeDsr: ['00'],
+    // UBAH: tipe DSR. Nama harus sama dengan kolom SalesmaneNama (huruf besar/kecil bebas).
+    // DSR yang tidak tercantum otomatis dianggap GT.
+    dsrType: {
+      MT: ['M. SAM UN HCPC', 'SUPRI BWNUT'],
+      GT: ['ISWATI', 'MINA M. MNUMUMES', 'AGUS TRIYADI', 'VIVI ZAYANTI', 'LIUS', 'SUWARMIN33']
+    },
+    // UBAH: salesman split (KHUSUS KPI Omset). Omset BU dialihkan ke DSR pemegang BU tsb.
+    split: [
+      { PC: 'AGUS TRIYADI', BW: 'AGUS TRIYADI', HC: 'LIUS', FOODS: 'LIUS' }
+    ]
+  },
   { code: 'ACP',    name: 'PT. Aditama Citra Papua',     short: 'Aditama',       salesFile: 'data/aditama.xlsx',       targetFile: 'data/target_aditama.csv',       excludeDsr: ['00'] },
   { code: 'KKK',    name: 'CV. Karya Kasih Karunia',     short: 'Karya Kasih',   salesFile: 'data/karya_kasih.xlsx',   targetFile: 'data/target_karya_kasih.csv',   excludeDsr: ['00'] }
 ];
+/* Tipe DSR (urutan tampil) */
+const TYPES = [
+  { code: 'GT', name: 'GT' },
+  { code: 'MT', name: 'MT' }
+];
+const up = s => String(s ?? '').trim().toUpperCase();
+function typeOfDsr(dt, name) {
+  const t = dt.dsrType || {};
+  for (const k of Object.keys(t)) if ((t[k] || []).some(n => up(n) === up(name))) return k;
+  return 'GT';
+}
 
 /* ===== 3. DAFTAR KPI — UBAH =====
    code     : harus sama dengan kolom KPI di file target
@@ -256,7 +278,7 @@ async function loadAll() {
       const targets = await loadTargets(dt);
       const dsrMap = new Map();
       rows.forEach(r => { if (!dt.excludeDsr.includes(r.dsr) && !dsrMap.has(r.dsr)) dsrMap.set(r.dsr, r.dsrName); });
-      const dsrs = [...dsrMap.entries()].map(([code, name]) => ({ code, name, dt: dt.code }))
+      const dsrs = [...dsrMap.entries()].map(([code, name]) => ({ code, name, dt: dt.code, type: typeOfDsr(dt, name) }))
         .sort((a, b) => a.code.localeCompare(b.code, 'id', { numeric: true }));
       const lastDate = rows.reduce((m, r) => (r.date > m ? r.date : m), new Date(0));
       state.data[dt.code] = { status: 'ok', rows, targets, dsrs, lastDate };
@@ -305,10 +327,27 @@ function computeTime() {
 function scopeDts() { return state.dt === 'ALL' ? DTS : DTS.filter(d => d.code === state.dt); }
 function scopeDsrKey() { return state.dsr === 'ALL' ? null : state.dsr; } // format "DT|kode"
 
+function emptyAgg() {
+  const o = { actual: 0, target: 0, bills: new Set(), bu: {} };
+  BUS.forEach(b => { o.bu[b.code] = { actual: 0, target: 0 }; });
+  return o;
+}
+function finishAgg(o, isBills) {
+  if (isBills) o.actual = o.bills.size;
+  o.ratio = o.target ? o.actual / o.target : null;
+  BUS.forEach(b => { const x = o.bu[b.code]; x.ratio = x.target ? x.actual / x.target : null; });
+  delete o.bills;
+  return o;
+}
+
 function computeKpi(kpi) {
-  const result = { list: [], actual: 0, target: 0, nonDsr: 0, lastDate: null, hasData: false, bu: {} };
-  BUS.forEach(b => { result.bu[b.code] = { actual: 0, target: 0 }; });
+  const isBills = kpi.source === 'bills', isOmset = kpi.source === 'omset';
+  const total = emptyAgg();
+  const groups = {}; TYPES.forEach(t => { groups[t.code] = emptyAgg(); });
+  const result = { list: [], nonDsr: 0, lastDate: null, hasData: false };
   const sel = scopeDsrKey();
+  let totalTargetOverride = 0, overrideUsed = true;
+
   scopeDts().forEach(dt => {
     const D = state.data[dt.code];
     if (!D || D.status !== 'ok') return;
@@ -316,53 +355,82 @@ function computeKpi(kpi) {
     result.hasData = true;
     if (!result.lastDate || D.lastDate > result.lastDate) result.lastDate = D.lastDate;
 
-    const per = new Map(); // dsr → {actual, set}
-    const dtBills = new Set();
-    let dtOmset = 0;
-    const dtBu = {};
-    D.rows.forEach(r => {
-      if (sel && sel !== dt.code + '|' + r.dsr) return;
-      let p = per.get(r.dsr);
-      if (!p) { p = { actual: 0, bills: new Set(), bu: {} }; per.set(r.dsr, p); }
-      if (kpi.source === 'omset') {
-        p.actual += r.gsv; dtOmset += r.gsv;
-        p.bu[r.bu] = (p.bu[r.bu] || 0) + r.gsv;
-        dtBu[r.bu] = (dtBu[r.bu] || 0) + r.gsv;
+    const codeByName = new Map(D.dsrs.map(s => [up(s.name), s.code]));
+    const dsrInfo = new Map(D.dsrs.map(s => [s.code, s]));
+    // Pemilik transaksi: untuk Omset, salesman split dialihkan sesuai BU
+    const ownerOf = r => {
+      if (isOmset && dt.split) {
+        for (const g of dt.split) {
+          const names = Object.values(g).map(up);
+          if (names.includes(up(r.dsrName))) {
+            const target = g[r.bu];
+            const c = target && codeByName.get(up(target));
+            return c || r.dsr;
+          }
+        }
       }
-      else if (kpi.source === 'bills' && !r.ret && r.outlet) { const k = r.outlet + '|' + r.day; p.bills.add(k); dtBills.add(k); }
-    });
+      return r.dsr;
+    };
 
-    let dsrSum = 0;
+    const per = new Map();
+    const getP = c => { let p = per.get(c); if (!p) { p = emptyAgg(); per.set(c, p); } return p; };
+    let dtNonDsr = 0;
+    const selCode = sel ? sel.split('|')[1] : null;
+
+    D.rows.forEach(r => {
+      const owner = ownerOf(r);
+      if (selCode && owner !== selCode) return;
+      const info = dsrInfo.get(owner);            // undefined = non-DSR (Shopsales)
+      const g = info ? groups[info.type] : null;
+      const p = info ? getP(owner) : null;
+      if (isOmset) {
+        total.actual += r.gsv; total.bu[r.bu] && (total.bu[r.bu].actual += r.gsv);
+        if (p) { p.actual += r.gsv; p.bu[r.bu] && (p.bu[r.bu].actual += r.gsv); }
+        if (g) { g.actual += r.gsv; g.bu[r.bu] && (g.bu[r.bu].actual += r.gsv); }
+        if (!info) dtNonDsr += r.gsv;
+      } else if (isBills && !r.ret && r.outlet) {
+        const k = dt.code + '|' + r.outlet + '|' + r.day;
+        total.bills.add(k);
+        if (p) p.bills.add(k);
+        if (g) g.bills.add(k);
+      }
+    });
+    if (isBills) {
+      // Non-DSR bills = toko/hari yang tidak dilayani DSR mana pun
+      const dsrKeys = new Set(); per.forEach(p => p.bills.forEach(k => dsrKeys.add(k)));
+      D.rows.forEach(r => { if (!r.ret && r.outlet && !dsrInfo.has(r.dsr)) { const k = dt.code + '|' + r.outlet + '|' + r.day; if (!dsrKeys.has(k)) { dsrKeys.add(k); dtNonDsr++; } } });
+    }
+    result.nonDsr += sel ? 0 : dtNonDsr;
+
     D.dsrs.forEach(s => {
-      if (sel && sel !== dt.code + '|' + s.code) return;
-      const p = per.get(s.code) || { actual: 0, bills: new Set(), bu: {} };
-      const actual = kpi.source === 'bills' ? p.bills.size : p.actual;
+      if (selCode && s.code !== selCode) return;
+      const p = per.get(s.code) || emptyAgg();
+      const actual = isBills ? p.bills.size : p.actual;
       const t = D.targets.get(s.code + '|' + kpi.code) || 0;
-      dsrSum += actual;
+      const g = groups[s.type];
+      g.target += t; total.target += t;
       const bu = {};
       BUS.forEach(b => {
-        const a = p.bu[b.code] || 0, bt = D.targets.get(s.code + '|' + kpi.code + '|' + b.code) || 0;
+        const bt = D.targets.get(s.code + '|' + kpi.code + '|' + b.code) || 0;
+        const a = p.bu[b.code].actual;
         bu[b.code] = { actual: a, target: bt, ratio: bt ? a / bt : null };
-        result.bu[b.code].target += bt;
-        if (sel) result.bu[b.code].actual += a;
+        g.bu[b.code].target += bt; total.bu[b.code].target += bt;
       });
-      result.list.push({ code: s.code, name: s.name, dt: dt.code, actual, target: t, ratio: t ? actual / t : null, bu });
+      result.list.push({ code: s.code, name: s.name, dt: dt.code, type: s.type, actual, target: t, ratio: t ? actual / t : null, bu });
     });
 
-    // Total DT: termasuk non-DSR (mis. Shopsales). Bills total = toko unik per hari se-DT.
-    const dtActual = sel ? dsrSum : (kpi.source === 'bills' ? dtBills.size : dtOmset);
-    result.actual += dtActual;
-    if (!sel) {
-      result.nonDsr += dtActual - dsrSum;
-      BUS.forEach(b => { result.bu[b.code].actual += dtBu[b.code] || 0; });   // termasuk non-DSR
-    }
-    const totalTarget = !sel && D.targets.get('TOTAL|' + kpi.code);
-    result.target += totalTarget || result.list.filter(p => p.dt === dt.code).reduce((s, p) => s + p.target, 0);
+    // Target DT khusus (baris TOTAL di file target) bila ada
+    const tt = !sel && D.targets.get('TOTAL|' + kpi.code);
+    if (tt) totalTargetOverride += tt; else overrideUsed = false;
   });
+
+  if (!sel && overrideUsed && totalTargetOverride) total.target = totalTargetOverride;
+  finishAgg(total, isBills);
+  TYPES.forEach(t => finishAgg(groups[t.code], isBills));
   result.list.forEach(p => { p.incentive = kpi.incentive && p.ratio != null && p.ratio >= kpi.incentiveMin ? kpi.incentive : 0; });
-  result.list.sort((a, b) => (b.ratio ?? -1) - (a.ratio ?? -1) || b.actual - a.actual);
-  result.ratio = result.target ? result.actual / result.target : null;
-  BUS.forEach(b => { const x = result.bu[b.code]; x.ratio = x.target ? x.actual / x.target : null; });
+  result.list.sort((a, b) => TYPES.findIndex(t => t.code === a.type) - TYPES.findIndex(t => t.code === b.type)
+    || (b.ratio ?? -1) - (a.ratio ?? -1) || b.actual - a.actual);
+  Object.assign(result, { actual: total.actual, target: total.target, ratio: total.ratio, bu: total.bu, groups });
   result.incentive = result.list.reduce((s, p) => s + p.incentive, 0);
   return result;
 }
@@ -383,7 +451,7 @@ function renderDsrSelect() {
   if (state.dsr !== 'ALL' && !list.some(d => d.key === state.dsr)) state.dsr = 'ALL';
   const multi = state.dt === 'ALL';
   $('dsrSelect').innerHTML = `<option value="ALL">Semua salesman (${list.length})</option>` +
-    list.map(d => `<option value="${esc(d.key)}" ${d.key === state.dsr ? 'selected' : ''}>${multi ? esc(d.dtShort) + ' · ' : ''}${esc(d.code)} - ${esc(d.name)}</option>`).join('');
+    list.map(d => `<option value="${esc(d.key)}" ${d.key === state.dsr ? 'selected' : ''}>${multi ? esc(d.dtShort) + ' · ' : ''}[${esc(d.type)}] ${esc(d.code)} - ${esc(d.name)}</option>`).join('');
 }
 
 function renderDataDates() {
@@ -419,6 +487,7 @@ function cardHTML(kpi, r) {
   if (!kpi.source) return pendingCard(kpi);
   const st = statusOf(r.ratio);
   const fmt = kpi.money ? fmtRp : fmtNum;
+  const fmtShort = kpi.money ? fmtJt : fmtNum;
   const hasT = r.target > 0;
   const detail = kpi.money
     ? `${fmtRp(r.actual)}${hasT ? `<br>dari ${fmtRp(r.target)}` : ''}`
@@ -426,6 +495,24 @@ function cardHTML(kpi, r) {
   const showDt = state.dt === 'ALL';
   const withBu = kpi.source === 'omset';
   const cols = 5 + (showDt ? 1 : 0) + (state.showIncentive ? 1 : 0) + (withBu ? BUS.length : 0);
+  const pct = x => x.ratio == null ? '—' : fmtPct(x.ratio);
+  const barW = x => x.ratio == null ? 0 : Math.min(100, Math.max(0, x.ratio * 100));
+
+  // ---- Blok GT / MT / Total ----
+  const typeRows = [...TYPES.map(t => ({ label: t.name, x: r.groups[t.code] })), { label: 'Total', x: r, total: true }]
+    .filter(o => o.total || o.x.actual || o.x.target);
+  const segBlock = state.dsr !== 'ALL' ? '' : `
+    <div class="seg-list">
+      ${typeRows.map(o => `
+      <div class="seg-row ${statusOf(o.x.ratio)}${o.total ? ' seg-total' : ''}">
+        <div class="bu-line"><span class="seg-name">${esc(o.label)}</span>
+          <span class="bu-val">${fmtShort(o.x.actual)}${o.x.target ? ' / ' + fmtShort(o.x.target) : ''}</span>
+          <span class="pill ${statusOf(o.x.ratio)}">${pct(o.x)}</span></div>
+        <div class="bar bar-sm"><div class="bar-fill" data-w="${barW(o.x)}"></div></div>
+      </div>`).join('')}
+    </div>`;
+
+  // ---- Blok BU (Omset): Total + rincian GT/MT ----
   const buCell = x => x.target ? `<span class="pill ${statusOf(x.ratio)}">${fmtPct(x.ratio)}</span>` : (x.actual ? `<span class="bu-amt">${fmtJt(x.actual)}</span>` : '-');
   const buBlock = !withBu ? '' : `
     <div class="bu-list">
@@ -434,25 +521,48 @@ function cardHTML(kpi, r) {
       <div class="bu-row ${statusOf(x.ratio)}">
         <div class="bu-line"><span class="bu-name">${esc(b.short)}</span>
           <span class="bu-val">${fmtJt(x.actual)}${x.target ? ' / ' + fmtJt(x.target) : ''}</span>
-          <span class="pill ${statusOf(x.ratio)}">${x.ratio == null ? '—' : fmtPct(x.ratio)}</span></div>
-        <div class="bar bar-sm"><div class="bar-fill" data-w="${x.ratio == null ? 0 : Math.min(100, Math.max(0, x.ratio * 100))}"></div></div>
+          <span class="pill ${statusOf(x.ratio)}">${pct(x)}</span></div>
+        <div class="bar bar-sm"><div class="bar-fill" data-w="${barW(x)}"></div></div>
+        ${state.dsr !== 'ALL' ? '' : `<div class="bu-split">${TYPES.map(t => { const g = r.groups[t.code].bu[b.code];
+          return `<span>${esc(t.name)} <b class="${statusOf(g.ratio)}-txt">${g.target ? fmtPct(g.ratio) : (g.actual ? fmtJt(g.actual) : '-')}</b></span>`; }).join('')}</div>`}
       </div>`; }).join('')}
     </div>`;
-  const rowsHtml = r.list.length ? r.list.map((p, n) => `
+
+  // ---- Tabel detail: dikelompokkan GT lalu MT ----
+  const dsrRow = (p, n) => `
       <tr>
-        <td>${n + 1}</td>
+        <td>${n}</td>
         <td>${esc(p.name)}</td>
         ${showDt ? `<td>${esc(dtByCode(p.dt).short)}</td>` : ''}
         <td class="num">${fmt(p.actual)}</td>
         <td class="num">${p.target ? fmt(p.target) : '-'}</td>
-        <td class="num"><span class="pill ${statusOf(p.ratio)}">${p.ratio == null ? '—' : fmtPct(p.ratio)}</span></td>
+        <td class="num"><span class="pill ${statusOf(p.ratio)}">${pct(p)}</span></td>
         ${withBu ? BUS.map(b => `<td class="num">${buCell(p.bu[b.code])}</td>`).join('') : ''}
         ${state.showIncentive ? `<td class="num">${p.incentive ? fmtRp(p.incentive) : '-'}</td>` : ''}
-      </tr>`).join('') : `<tr><td colspan="${cols}" class="empty">Tidak ada data.</td></tr>`;
+      </tr>`;
+  const groupRow = (label, g) => `
+      <tr class="grp">
+        <td></td><td>${esc(label)}</td>${showDt ? '<td></td>' : ''}
+        <td class="num">${fmt(g.actual)}</td>
+        <td class="num">${g.target ? fmt(g.target) : '-'}</td>
+        <td class="num"><span class="pill ${statusOf(g.ratio)}">${pct(g)}</span></td>
+        ${withBu ? BUS.map(b => `<td class="num">${buCell(g.bu[b.code])}</td>`).join('') : ''}
+        ${state.showIncentive ? '<td></td>' : ''}
+      </tr>`;
+  let rowsHtml = '';
+  TYPES.forEach(t => {
+    const items = r.list.filter(p => p.type === t.code);
+    if (!items.length) return;
+    if (state.dsr === 'ALL') rowsHtml += groupRow(`DSR ${t.name} (${items.length})`, r.groups[t.code]);
+    rowsHtml += items.map((p, i) => dsrRow(p, i + 1)).join('');
+  });
+  if (!rowsHtml) rowsHtml = `<tr><td colspan="${cols}" class="empty">Tidak ada data.</td></tr>`;
   const nonDsrRow = r.nonDsr ? `<tr class="subtotal"><td></td><td>Non-DSR (Shopsales, dll.)</td>${showDt ? '<td></td>' : ''}<td class="num">${fmt(r.nonDsr)}</td><td></td><td></td>${withBu ? BUS.map(() => '<td></td>').join('') : ''}${state.showIncentive ? '<td></td>' : ''}</tr>` : '';
+  const totalRow = state.dsr === 'ALL' && r.list.length ? groupRow('TOTAL', r).replace('class="grp"', 'class="grp grp-total"') : '';
   const incentiveHtml = !state.showIncentive ? '' : kpi.incentive
     ? `<div class="incentive">Est. insentif: ${fmtRp(r.incentive)} (${r.list.filter(p => p.incentive).length} DSR lolos)</div>`
     : `<div class="incentive">Skema insentif belum diatur</div>`;
+  const splitNote = withBu && scopeDts().some(d => d.split) ? `<div class="split-note">Salesman split: omset BU dialihkan ke DSR pemegang BU.</div>` : '';
 
   return `
   <article class="card ${st}${withBu ? ' has-bu' : ''}">
@@ -461,15 +571,17 @@ function cardHTML(kpi, r) {
     ${hasT ? `<div class="card-pct" data-target="${r.ratio}">0,0%</div>` : `<div class="card-pct">—</div>`}
     <div class="card-detail">${detail}</div>
     ${hasT ? '' : '<div class="pending-note">Target belum diisi di file target.</div>'}
-    <div class="bar"><div class="bar-fill" data-w="${hasT ? Math.min(100, Math.max(0, r.ratio * 100)) : 0}"></div></div>
+    <div class="bar"><div class="bar-fill" data-w="${hasT ? barW(r) : 0}"></div></div>
+    ${segBlock}
     ${buBlock}
     <div class="basis">${esc(kpi.basis)}</div>
+    ${splitNote}
     ${incentiveHtml}
     <button type="button" class="detail-btn" aria-expanded="false">Klik di sini untuk lihat detail <span class="caret">▾</span></button>
     <div class="acc"><div class="acc-inner">
       <div class="table-wrap"><table>
         <thead><tr><th>#</th><th>DSR</th>${showDt ? '<th>DT</th>' : ''}<th class="num">Actual</th><th class="num">Target</th><th class="num">%</th>${withBu ? BUS.map(b => `<th class="num">${esc(b.short)}</th>`).join('') : ''}${state.showIncentive ? '<th class="num">Insentif</th>' : ''}</tr></thead>
-        <tbody>${rowsHtml}${nonDsrRow}</tbody>
+        <tbody>${rowsHtml}${nonDsrRow}${totalRow}</tbody>
       </table></div>
     </div></div>
   </article>`;

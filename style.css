@@ -246,3 +246,18 @@ tr.subtotal td { background: #f8fafc; color: var(--muted); font-style: italic; }
 .bu-row.s-red .bar-fill { background: var(--red-bar); }
 /* Kartu Omset melebar saat detail dibuka (tabel BU lebih lega) */
 @media (min-width: 641px) { .card.has-bu.open { grid-column: span 2; } }
+
+/* ===== GT / MT / Total ===== */
+.seg-list { display: flex; flex-direction: column; gap: 7px; border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+.seg-name { font-weight: 800; min-width: 42px; font-size: 12px; }
+.seg-row.seg-total { border-top: 1px dashed var(--line); padding-top: 7px; }
+.seg-row.seg-total .seg-name { color: var(--ink); }
+.seg-row.s-green .bar-fill { background: var(--green-bar); }
+.seg-row.s-yellow .bar-fill { background: var(--yellow-bar); }
+.seg-row.s-red .bar-fill { background: var(--red-bar); }
+.bu-split { display: flex; gap: 14px; font-size: 11px; color: var(--muted); margin-top: 3px; }
+.bu-split b { font-weight: 800; }
+.s-green-txt { color: var(--green); } .s-yellow-txt { color: var(--yellow); } .s-red-txt { color: var(--red); } .s-none-txt { color: #475569; }
+.split-note { font-size: 11px; color: var(--muted); font-style: italic; }
+tr.grp td { background: #eef2ff; font-weight: 800; color: #1e3a8a; }
+tr.grp-total td { background: #e2e8f0; color: var(--ink); }
