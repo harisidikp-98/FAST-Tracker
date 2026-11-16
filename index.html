@@ -61,7 +61,7 @@
     </div>
 
     <header class="page-head">
-      <h1>Dashboard</h1>
+      <h1 id="pageTitle">Dashboard</h1>
       <p class="page-date" id="pageDate">-</p>
     </header>
 
@@ -96,13 +96,36 @@
         <span class="sr-only">Filter salesman</span>
         <select id="dsrSelect"></select>
       </label>
-      <label class="check">
+      <label class="check" id="incentiveWrap">
         <input type="checkbox" id="incentiveChk"> Tampilkan insentif DSR
       </label>
       <button type="button" class="btn-dark" id="fsBtn"><i data-lucide="maximize"></i> <span id="fsLabel">Layar penuh</span></button>
     </div>
 
     <section class="grid" id="kpiGrid" aria-live="polite"></section>
+
+    <!-- ===== HALAMAN OUTLET ===== -->
+    <section class="outlet-page" id="outletPage" hidden>
+      <div class="out-tabs" role="tablist">
+        <button type="button" class="out-tab active" role="tab" data-otab="perf" aria-selected="true">Outlet Performance</button>
+        <button type="button" class="out-tab" role="tab" data-otab="ps" aria-selected="false">Outlet Panel Perfect Store</button>
+      </div>
+      <div class="out-controls">
+        <label class="search-wrap">
+          <span class="sr-only">Cari outlet</span>
+          <input type="search" id="outletSearch" placeholder="Cari nama atau kode toko…" autocomplete="off">
+        </label>
+        <label class="select-wrap" id="psStatusWrap" hidden>
+          <span class="sr-only">Status Perfect Store</span>
+          <select id="psStatus">
+            <option value="all">Semua status</option>
+            <option value="perfect">Sudah perfect</option>
+            <option value="not">Belum perfect</option>
+          </select>
+        </label>
+      </div>
+      <div id="outletBody" aria-live="polite"></div>
+    </section>
 
     <footer class="foot">Update data: upload ulang file export DT ke folder <code>data/</code> · Target: <code>data/target_&lt;dt&gt;.csv</code></footer>
   </main>

@@ -85,7 +85,7 @@ function normBU(v) {
 }
 
 /* ===== 4. STATE & UTIL ===== */
-const state = { data: {}, ps: { status: 'none', rows: [], date: null }, dt: 'ALL', dsr: 'ALL', showIncentive: false, laju: 0, loading: false };
+const state = { page: 'Dashboard', outlet: { tab: 'perf', q: '', psStatus: 'all', limit: 200, sort: { perf: { key: 'gsv', dir: -1 }, ps: { key: 'dsr', dir: 1 } } }, data: {}, ps: { status: 'none', rows: [], date: null }, dt: 'ALL', dsr: 'ALL', showIncentive: false, laju: 0, loading: false };
 const $ = id => document.getElementById(id);
 const nf = new Intl.NumberFormat('id-ID');
 const fmtNum = n => nf.format(Math.round(n || 0));
@@ -211,6 +211,8 @@ async function loadSales(dt) {
       date, day: ymd(date), dsr,
       dsrName: String(pick(o, 'salesmanenama', 'salesmanname', 'salesmannama', 'nama_dsr')).trim(),
       outlet: String(pick(o, 'outlet')).trim(),
+      outletName: String(pick(o, 'outlet name')).trim(),
+      sub: String(pick(o, 'subchannel')).trim(),
       ret: /return|retur/i.test(pick(o, 'billing type')),
       bu: normBU(pick(o, 'sub_division', 'bu')),
       gsv: toNum(pick(o, 'gsv'))
@@ -264,9 +266,14 @@ async function loadPerfectStore() {
     const dist = String(pick(o, 'distributor code&name')).trim();
     if (!outlet || !dist) return;                       // lewati baris Total & keterangan filter
     const one = k => toNum(pick(o, k)) >= 1;
+    const om = /^\s*(\S+)\s*-\s*(.*)$/.exec(outlet);
     rows.push({
       distCode: (/^\d+/.exec(dist) || [''])[0],
       outlet,
+      outletCode: om ? om[1] : outlet,
+      outletName: om ? om[2].trim() : outlet,
+      sub: String(pick(o, 'sub element description')).trim(),
+      pjp: String(pick(o, 'pjp day')).trim(),
       dsrs: parsePsDsr(pick(o, 'dsr name')),
       full: /FULL/i.test(pick(o, 'status panel - ps type')),
       panel: toNum(pick(o, 'total store panel')),
@@ -738,6 +745,7 @@ function animate() {
 }
 
 function render(withFade = true) {
+  if (state.page === 'Outlet') { $('scopeTitle').textContent = scopeTitle(); renderOutletPage(); return; }
   const grid = $('kpiGrid');
   const draw = () => {
     $('scopeTitle').textContent = scopeTitle();
@@ -775,6 +783,275 @@ function closeTableModal() {
   document.body.style.overflow = '';
 }
 
+/* ===== 9c. HALAMAN OUTLET =====
+   Tab 1  Outlet Performance          : dari file sales per DT
+   Tab 2  Outlet Panel Perfect Store  : dari file Perfect Store
+   Mengikuti tab DT & dropdown salesman di atas. Bisa dicari by nama / kode toko. */
+const PAGES = ['Dashboard', 'Outlet'];
+const OUT_LIMIT = 200;   // jumlah baris awal yang ditampilkan (sisanya via tombol)
+
+function showPage(page) {
+  state.page = page;
+  $('pageTitle').textContent = page;
+  $('kpiGrid').hidden = page !== 'Dashboard';
+  $('outletPage').hidden = page !== 'Outlet';
+  $('incentiveWrap').hidden = page !== 'Dashboard';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  render(false);
+}
+
+const matchQ = (code, name) => {
+  const q = up(state.outlet.q); if (!q) return true;
+  return up(code).includes(q) || up(name).includes(q);
+};
+function sortRows(rows, cols, sortState) {
+  const c = cols.find(x => x.key === sortState.key) || cols.find(x => x.get);
+  if (!c || !c.get) return rows;
+  return rows.sort((a, b) => {
+    const va = c.get(a), vb = c.get(b);
+    const r = (typeof va === 'number' && typeof vb === 'number') ? va - vb : String(va ?? '').localeCompare(String(vb ?? ''), 'id', { numeric: true });
+    return r * sortState.dir;
+  });
+}
+function tableHTML(id, title, cols, rows, sortState, opts = {}) {
+  const shown = opts.limit ? rows.slice(0, opts.limit) : rows;
+  const head = cols.map(c => {
+    const on = sortState && c.get && sortState.key === c.key;
+    const arrow = on ? (sortState.dir > 0 ? ' ▲' : ' ▼') : '';
+    return `<th class="${c.num ? 'num' : ''}${c.get && sortState ? ' sortable' : ''}" ${c.get && sortState ? `data-sort="${c.key}" data-table="${id}" tabindex="0" aria-sort="${on ? (sortState.dir > 0 ? 'ascending' : 'descending') : 'none'}"` : ''}>${esc(c.label)}${arrow}</th>`;
+  }).join('');
+  const body = shown.length ? shown.map((r, i) => `<tr class="${r._cls || ''}">${cols.map(c => `<td class="${c.num ? 'num' : ''}${c.wrap ? ' wrap' : ''}">${c.html(r, i)}</td>`).join('')}</tr>`).join('')
+    : `<tr><td colspan="${cols.length}" class="empty">${esc(opts.empty || 'Tidak ada data.')}</td></tr>`;
+  const more = opts.limit && rows.length > opts.limit
+    ? `<button type="button" class="more-btn">Tampilkan semua (${fmtNum(rows.length)} baris)</button>` : '';
+  return `
+    <div class="out-block">
+      <div class="out-block-head">
+        <h3>${esc(title)}</h3>
+        <button type="button" class="expand-btn" data-title="${esc(title)}">⛶ Lihat layar penuh</button>
+      </div>
+      <div class="table-wrap out-table"><table>
+        <thead><tr>${head}</tr></thead><tbody>${body}${opts.foot || ''}</tbody>
+      </table></div>
+      ${more}
+    </div>`;
+}
+const statBox = (label, value, sub, cls = '') => `
+  <div class="out-stat ${cls}"><div class="info-label">${esc(label)}</div><div class="out-stat-val">${value}</div><div class="info-sub">${sub || ''}</div></div>`;
+const yesNo = v => v ? '<span class="pill s-green">✓</span>' : '<span class="pill s-red">✗</span>';
+const dtShort = c => esc(dtByCode(c)?.short || c);
+
+/* --- Tab 1: Outlet Performance --- */
+function outletPerfRows() {
+  const sel = scopeDsrKey(), sc = sel ? sel.split('|')[1] : null;
+  const map = new Map();
+  scopeDts().forEach(dt => {
+    const D = state.data[dt.code];
+    if (!D || D.status !== 'ok') return;
+    if (sel && !sel.startsWith(dt.code + '|')) return;
+    D.rows.forEach(r => {
+      if (sc && r.dsr !== sc) return;
+      if (!r.outlet) return;
+      const k = dt.code + '|' + r.outlet;
+      let o = map.get(k);
+      if (!o) { o = { code: r.outlet, name: r.outletName, sub: r.sub, dt: dt.code, dsrs: new Set(), gsv: 0, days: new Set(), last: null, bu: {} }; map.set(k, o); }
+      if (!o.name && r.outletName) o.name = r.outletName;
+      if (!dt.excludeDsr.includes(r.dsr)) o.dsrs.add(r.dsrName);
+      o.gsv += r.gsv;
+      o.bu[r.bu] = (o.bu[r.bu] || 0) + r.gsv;
+      if (!r.ret) { o.days.add(r.day); if (!o.last || r.date > o.last) o.last = r.date; }
+    });
+  });
+  return [...map.values()].map(o => ({ ...o, bills: o.days.size, dsr: [...o.dsrs].join(', '), buList: BUS.filter(b => (o.bu[b.code] || 0) > 0) }));
+}
+function renderOutletPerf() {
+  const anySales = scopeDts().some(dt => state.data[dt.code]?.status === 'ok');
+  if (!anySales) return `<div class="empty-dt"><b>Data sales belum tersedia</b>Outlet Performance membutuhkan file sales DT ini.</div>`;
+  const all = outletPerfRows();
+  const active = all.filter(o => o.bills > 0);
+  const totGsv = all.reduce((s, o) => s + o.gsv, 0);
+  const totBills = all.reduce((s, o) => s + o.bills, 0);
+  const showDt = state.dt === 'ALL';
+  const rows = sortRows(all.filter(o => matchQ(o.code, o.name)), PERF_COLS(showDt), state.outlet.sort.perf);
+  const stats = `
+    <div class="out-stats">
+      ${statBox('Outlet aktif', fmtNum(active.length), 'belanja ≥ 1 kali bulan ini')}
+      ${statBox('Total omset (GSV)', fmtRp(totGsv), 'retur sudah mengurangi')}
+      ${statBox('Rata-rata omset / outlet', fmtRp(active.length ? totGsv / active.length : 0), 'outlet aktif')}
+      ${statBox('Total bill', fmtNum(totBills), '1 bill = toko unik per hari')}
+    </div>`;
+  const note = `<p class="out-note">Menampilkan ${fmtNum(rows.length)} dari ${fmtNum(all.length)} outlet${state.outlet.q ? ` untuk pencarian "<b>${esc(state.outlet.q)}</b>"` : ''}. Kolom DSR = salesman yang menagih di outlet tsb (sebelum aturan salesman split).</p>`;
+  return stats + note + tableHTML('perf', 'Outlet Performance', PERF_COLS(showDt), rows, state.outlet.sort.perf,
+    { limit: state.outlet.limit, empty: 'Outlet tidak ditemukan.' });
+}
+function PERF_COLS(showDt) {
+  return [
+    { key: 'no', label: '#', html: (r, i) => i + 1 },
+    { key: 'code', label: 'Kode Toko', get: r => r.code, html: r => `<span class="mono">${esc(r.code)}</span>` },
+    { key: 'name', label: 'Nama Toko', get: r => r.name, html: r => esc(r.name || '-'), wrap: true },
+    ...(showDt ? [{ key: 'dt', label: 'DT', get: r => dtShort(r.dt), html: r => dtShort(r.dt) }] : []),
+    { key: 'sub', label: 'Sub Channel', get: r => r.sub, html: r => esc(r.sub || '-') },
+    { key: 'dsr', label: 'DSR', get: r => r.dsr, html: r => esc(r.dsr || '-'), wrap: true },
+    { key: 'gsv', label: 'Omset (GSV)', num: true, get: r => r.gsv, html: r => fmtRp(r.gsv) },
+    { key: 'bills', label: 'Bill', num: true, get: r => r.bills, html: r => fmtNum(r.bills) },
+    { key: 'avg', label: 'Rata-rata / bill', num: true, get: r => r.bills ? r.gsv / r.bills : 0, html: r => r.bills ? fmtRp(r.gsv / r.bills) : '-' },
+    { key: 'bu', label: 'BU dibeli', get: r => r.buList.length, html: r => r.buList.length ? r.buList.map(b => `<span class="bu-chip">${esc(b.short)}</span>`).join('') : '-' },
+    { key: 'last', label: 'Belanja terakhir', get: r => r.last ? r.last.getTime() : 0, html: r => r.last ? shortDate(r.last) : '-' }
+  ];
+}
+
+/* --- Tab 2: Outlet Panel Perfect Store --- */
+function psMissing(r) {
+  if (r.full) return [!r.pa && 'Availability', !r.pv && 'Visibility', !r.pd && 'Digitization'].filter(Boolean).join(', ');
+  const m = [];
+  if (!r.pa) m.push('Availability');
+  if (!r.pv && !r.pd) m.push('Visibility / Digitization');
+  return m.join(', ');
+}
+function outletGsvMap(D) {
+  if (D._gsv) return D._gsv;
+  const m = new Map();
+  (D.rows || []).forEach(r => m.set(r.outlet, (m.get(r.outlet) || 0) + r.gsv));
+  return (D._gsv = m);
+}
+function psOutletRows() {
+  const sel = scopeDsrKey(), sc = sel ? sel.split('|')[1] : null;
+  const out = [];
+  scopeDts().forEach(dt => {
+    const D = state.data[dt.code];
+    if (!D || !D.ps || !D.ps.length) return;
+    if (sel && !sel.startsWith(dt.code + '|')) return;
+    const gsv = D.status === 'ok' ? outletGsvMap(D) : null;
+    D.ps.forEach(r => {
+      if (sc && !r.codes.includes(sc)) return;
+      const perfect = psAchieved(r, 'perfect');
+      out.push({ ...r, dt: dt.code, perfect, missing: perfect ? '' : psMissing(r),
+        dsr: r.dsrs.map(x => x.name).join(' & '), gsv: gsv ? (gsv.get(r.outletCode) || 0) : null,
+        _cls: perfect ? 'row-ok' : '' });
+    });
+  });
+  return out;
+}
+function psAgg(rows) {
+  const a = { panel: 0, pa: 0, pv: 0, pd: 0, ps: 0 };
+  rows.forEach(r => { a.panel += r.panel; a.pa += r.pa ? 1 : 0; a.pv += r.pv ? 1 : 0; a.pd += r.pd ? 1 : 0; a.ps += r.perfect ? 1 : 0; });
+  return a;
+}
+const pctPill = (n, d) => d ? `<span class="pill ${statusOf(n / d)}">${fmtPct(n / d)}</span>` : '-';
+const SUM_COLS = first => [
+  ...first,
+  { key: 'panel', label: 'Toko Panel', num: true, get: r => r.panel, html: r => fmtNum(r.panel) },
+  { key: 'pa', label: 'Availability', num: true, get: r => r.pa, html: r => `${fmtNum(r.pa)} ${pctPill(r.pa, r.panel)}` },
+  { key: 'pv', label: 'Visibility', num: true, get: r => r.pv, html: r => `${fmtNum(r.pv)} ${pctPill(r.pv, r.panel)}` },
+  { key: 'pd', label: 'Digitization', num: true, get: r => r.pd, html: r => `${fmtNum(r.pd)} ${pctPill(r.pd, r.panel)}` },
+  { key: 'ps', label: 'Perfect Store', num: true, get: r => r.ps, html: r => `${fmtNum(r.ps)} ${pctPill(r.ps, r.panel)}` }
+];
+function renderOutletPs() {
+  if (state.ps.status !== 'ok') return `<div class="empty-dt"><b>Data Perfect Store belum tersedia</b>Upload file ke <code>${esc(CONFIG.psFile)}</code>.</div>`;
+  const all = psOutletRows();
+  if (!all.length) return `<div class="empty-dt"><b>Tidak ada toko panel</b>untuk pilihan DT / salesman ini.</div>`;
+  const showDt = state.dt === 'ALL';
+  const tot = psAgg(all);
+  const stats = `
+    <div class="out-stats">
+      ${statBox('Toko panel', fmtNum(tot.panel), `FULL ${fmtNum(all.filter(r => r.full).length)} · LITE ${fmtNum(all.filter(r => !r.full).length)}`)}
+      ${statBox('Perfect Store', `${fmtNum(tot.ps)} <small>${fmtPct(tot.panel ? tot.ps / tot.panel : 0)}</small>`, 'FULL: A+V+D · LITE: A+V / A+D', statusOf(tot.panel ? tot.ps / tot.panel : null))}
+      ${statBox('Availability', `${fmtNum(tot.pa)} <small>${fmtPct(tot.panel ? tot.pa / tot.panel : 0)}</small>`, 'toko perfect availability', statusOf(tot.panel ? tot.pa / tot.panel : null))}
+      ${statBox('Visibility', `${fmtNum(tot.pv)} <small>${fmtPct(tot.panel ? tot.pv / tot.panel : 0)}</small>`, 'toko perfect visibility', statusOf(tot.panel ? tot.pv / tot.panel : null))}
+      ${statBox('Digitization', `${fmtNum(tot.pd)} <small>${fmtPct(tot.panel ? tot.pd / tot.panel : 0)}</small>`, 'toko perfect digitization', statusOf(tot.panel ? tot.pd / tot.panel : null))}
+    </div>`;
+  let html = stats;
+  const noDsr = state.dsr === 'ALL';
+
+  // Ringkasan per DT (Gabungan)
+  if (showDt && noDsr) {
+    const rows = DTS.map(dt => ({ dt: dt.code, name: dt.name, ...psAgg(all.filter(r => r.dt === dt.code)) })).filter(r => r.panel);
+    const t = { name: 'TOTAL', ...tot, _cls: 'grp grp-total' };
+    html += tableHTML('sumdt', 'Ringkasan per DT', SUM_COLS([{ key: 'name', label: 'Distributor', html: r => esc(r.name) }]), [...rows, t], null);
+  }
+  // Ringkasan per salesman
+  if (noDsr) {
+    const per = new Map();
+    all.forEach(r => {
+      const keys = r.codes.length ? r.codes : ['__none'];
+      keys.forEach(c => { const k = r.dt + '|' + c; if (!per.has(k)) per.set(k, []); per.get(k).push(r); });
+    });
+    const rows = [...per.entries()].map(([k, list]) => {
+      const [dtc, c] = k.split('|');
+      const s = (state.data[dtc]?.dsrs || []).find(x => x.code === c);
+      return { dt: dtc, name: s ? s.name : 'Toko tanpa DSR', code: s ? c : '', type: s ? s.type : '', ...psAgg(list), _cls: s ? '' : 'subtotal' };
+    }).sort((a, b) => (a._cls ? 1 : 0) - (b._cls ? 1 : 0) || (b.panel ? b.ps / b.panel : 0) - (a.panel ? a.ps / a.panel : 0) || b.panel - a.panel);
+    const first = [{ key: 'name', label: 'Salesman', html: r => r.code ? `${esc(r.name)} <span class="muted">(${esc(r.code)})</span>` : esc(r.name) },
+      ...(showDt ? [{ key: 'dt', label: 'DT', html: r => dtShort(r.dt) }] : [])];
+    const foot = `<tr class="grp grp-total"><td>TOTAL</td>${showDt ? '<td></td>' : ''}<td class="num">${fmtNum(tot.panel)}</td><td class="num">${fmtNum(tot.pa)} ${pctPill(tot.pa, tot.panel)}</td><td class="num">${fmtNum(tot.pv)} ${pctPill(tot.pv, tot.panel)}</td><td class="num">${fmtNum(tot.pd)} ${pctPill(tot.pd, tot.panel)}</td><td class="num">${fmtNum(tot.ps)} ${pctPill(tot.ps, tot.panel)}</td></tr>`;
+    html += tableHTML('sumdsr', 'Ringkasan per salesman', SUM_COLS(first), rows, null, { foot });
+    html += `<p class="out-note">Toko split (2 DSR) dihitung di masing-masing salesman, 1 kali di TOTAL.</p>`;
+  }
+
+  // Daftar toko panel
+  const st = state.outlet.psStatus;
+  const filtered = all.filter(r => matchQ(r.outletCode, r.outletName) && (st === 'all' || (st === 'perfect') === r.perfect));
+  const cols = PS_COLS(showDt);
+  const rows = sortRows(filtered, cols, state.outlet.sort.ps);
+  html += `<p class="out-note">Menampilkan ${fmtNum(rows.length)} dari ${fmtNum(all.length)} toko panel${state.outlet.q ? ` untuk pencarian "<b>${esc(state.outlet.q)}</b>"` : ''}.</p>`;
+  html += tableHTML('ps', 'Daftar toko panel Perfect Store', cols, rows, state.outlet.sort.ps, { limit: state.outlet.limit, empty: 'Toko tidak ditemukan.' });
+  return html;
+}
+function PS_COLS(showDt) {
+  return [
+    { key: 'no', label: '#', html: (r, i) => i + 1 },
+    { key: 'code', label: 'Kode Toko', get: r => r.outletCode, html: r => `<span class="mono">${esc(r.outletCode)}</span>` },
+    { key: 'name', label: 'Nama Toko', get: r => r.outletName, html: r => esc(r.outletName), wrap: true },
+    ...(showDt ? [{ key: 'dt', label: 'DT', get: r => dtShort(r.dt), html: r => dtShort(r.dt) }] : []),
+    { key: 'dsr', label: 'DSR', get: r => r.dsr || '\uffff', html: r => esc(r.dsr || 'Tanpa DSR'), wrap: true },
+    { key: 'pjp', label: 'PJP', get: r => r.pjp, html: r => esc(r.pjp || '-') },
+    { key: 'sub', label: 'Sub Element', get: r => r.sub, html: r => esc(r.sub || '-') },
+    { key: 'type', label: 'Tipe', get: r => r.full ? 'FULL' : 'LITE', html: r => `<span class="type-chip ${r.full ? 'full' : 'lite'}">${r.full ? 'FULL' : 'LITE'}</span>` },
+    { key: 'pa', label: 'Avail', get: r => +r.pa, html: r => yesNo(r.pa) },
+    { key: 'pv', label: 'Visib', get: r => +r.pv, html: r => yesNo(r.pv) },
+    { key: 'pd', label: 'Digi', get: r => +r.pd, html: r => yesNo(r.pd) },
+    { key: 'perfect', label: 'Perfect Store', get: r => +r.perfect, html: r => r.perfect ? '<span class="pill s-green">PERFECT</span>' : '<span class="pill s-red">BELUM</span>' },
+    { key: 'missing', label: 'Yang kurang', get: r => r.missing, html: r => esc(r.missing || '-'), wrap: true },
+    { key: 'gsv', label: 'Omset bln ini', num: true, get: r => r.gsv ?? -1, html: r => r.gsv == null ? '<span class="muted">n/a</span>' : fmtRp(r.gsv) }
+  ];
+}
+
+function renderOutletPage() {
+  const tab = state.outlet.tab;
+  document.querySelectorAll('.out-tab').forEach(b => { const on = b.dataset.otab === tab; b.classList.toggle('active', on); b.setAttribute('aria-selected', on); });
+  $('psStatusWrap').hidden = tab !== 'ps';
+  $('outletBody').innerHTML = tab === 'perf' ? renderOutletPerf() : renderOutletPs();
+}
+
+function bindOutletEvents() {
+  document.querySelectorAll('.out-tab').forEach(b => b.addEventListener('click', () => {
+    if (state.outlet.tab === b.dataset.otab) return;
+    state.outlet.tab = b.dataset.otab; state.outlet.limit = OUT_LIMIT; renderOutletPage();
+  }));
+  let t;
+  $('outletSearch').addEventListener('input', e => {
+    clearTimeout(t);
+    t = setTimeout(() => { state.outlet.q = e.target.value.trim(); state.outlet.limit = OUT_LIMIT; renderOutletPage(); }, 150);
+  });
+  $('psStatus').addEventListener('change', e => { state.outlet.psStatus = e.target.value; renderOutletPage(); });
+  const sortBy = th => {
+    const tb = th.dataset.table, key = th.dataset.sort, cur = state.outlet.sort[tb];
+    if (!cur) return;
+    state.outlet.sort[tb] = { key, dir: cur.key === key ? -cur.dir : (key === 'gsv' || key === 'bills' || key === 'avg' || key === 'last' ? -1 : 1) };
+    renderOutletPage();
+  };
+  $('outletBody').addEventListener('click', e => {
+    const x = e.target.closest('.expand-btn');
+    if (x) { openTableModal(x.dataset.title, x.closest('.out-block').querySelector('table')); return; }
+    if (e.target.closest('.more-btn')) { state.outlet.limit = Infinity; renderOutletPage(); return; }
+    const th = e.target.closest('th[data-sort]'); if (th) sortBy(th);
+  });
+  $('outletBody').addEventListener('keydown', e => {
+    const th = e.target.closest('th[data-sort]');
+    if (th && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); sortBy(th); }
+  });
+}
+
 /* ===== 10. EVENT ===== */
 function bindEvents() {
   $('dtTabs').addEventListener('click', e => {
@@ -808,11 +1085,13 @@ function bindEvents() {
   $('menuBtn').addEventListener('click', () => { $('sidebar').classList.add('open'); $('overlay').classList.add('show'); });
   $('overlay').addEventListener('click', closeSide);
   document.querySelectorAll('.nav-item').forEach(n => n.addEventListener('click', () => {
-    document.querySelectorAll('.nav-item').forEach(x => x.classList.remove('active'));
-    n.classList.add('active');
-    if (n.dataset.page !== 'Dashboard') toast(`Halaman "${n.dataset.page}" segera hadir`);
+    const page = n.dataset.page;
     closeSide();
+    if (!PAGES.includes(page)) { toast(`Halaman "${page}" segera hadir`); return; }
+    document.querySelectorAll('.nav-item').forEach(x => x.classList.toggle('active', x === n));
+    showPage(page);
   }));
+  bindOutletEvents();
 }
 
 /* ===== 11. MULAI ===== */
