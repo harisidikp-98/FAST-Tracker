@@ -261,3 +261,20 @@ tr.subtotal td { background: #f8fafc; color: var(--muted); font-style: italic; }
 .split-note { font-size: 11px; color: var(--muted); font-style: italic; }
 tr.grp td { background: #eef2ff; font-weight: 800; color: #1e3a8a; }
 tr.grp-total td { background: #e2e8f0; color: var(--ink); }
+
+/* ===== Tombol & modal tabel layar penuh ===== */
+.acc-tools { display: flex; justify-content: flex-end; margin-top: 8px; }
+.expand-btn { border: 1px solid var(--line); background: #fff; color: var(--accent); font-weight: 800; font-size: 12px; padding: 6px 12px; border-radius: 8px; cursor: pointer; transition: background .2s ease-out; }
+.expand-btn:hover { background: var(--accent-soft); }
+.tmodal { position: fixed; inset: 0; z-index: 80; background: rgba(15,23,42,.55); display: flex; align-items: center; justify-content: center; padding: 16px; opacity: 0; pointer-events: none; transition: opacity .25s ease-out; }
+.tmodal.show { opacity: 1; pointer-events: auto; }
+.tmodal-box { background: #fff; border-radius: 16px; width: 100%; max-width: 1400px; height: 100%; max-height: calc(100vh - 32px); display: flex; flex-direction: column; overflow: hidden; transform: scale(.98); transition: transform .25s ease-out; box-shadow: 0 20px 60px rgba(0,0,0,.25); }
+.tmodal.show .tmodal-box { transform: scale(1); }
+.tmodal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.tmodal-head h3 { margin: 0; font-size: 16px; font-weight: 800; min-width: 0; overflow-wrap: anywhere; }
+.tmodal-close { border: 0; background: var(--ink); color: #fff; font-weight: 700; font-size: 13px; padding: 8px 14px; border-radius: 10px; cursor: pointer; flex-shrink: 0; }
+.tmodal-body { flex: 1; overflow: auto; padding: 0 0 8px; }
+.tmodal-body table { font-size: 14px; }
+.tmodal-body th, .tmodal-body td { padding: 10px 14px; }
+.tmodal-body th { font-size: 12px; }
+@media (max-width: 640px) { .tmodal { padding: 0; } .tmodal-box { border-radius: 0; max-height: 100vh; } .tmodal-body table { font-size: 12px; } .tmodal-body th, .tmodal-body td { padding: 8px 10px; } }

@@ -107,6 +107,17 @@
     <footer class="foot">Update data: upload ulang file export DT ke folder <code>data/</code> · Target: <code>data/target_&lt;dt&gt;.csv</code></footer>
   </main>
 
+  <!-- Tabel detail layar penuh -->
+  <div class="tmodal" id="tableModal" role="dialog" aria-modal="true" aria-labelledby="tmTitle">
+    <div class="tmodal-box">
+      <div class="tmodal-head">
+        <h3 id="tmTitle">Detail</h3>
+        <button type="button" class="tmodal-close" id="tmClose" aria-label="Tutup">✕ Tutup</button>
+      </div>
+      <div class="tmodal-body" id="tmBody"></div>
+    </div>
+  </div>
+
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="app.js"></script>
 </body>

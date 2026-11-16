@@ -523,8 +523,6 @@ function cardHTML(kpi, r) {
           <span class="bu-val">${fmtJt(x.actual)}${x.target ? ' / ' + fmtJt(x.target) : ''}</span>
           <span class="pill ${statusOf(x.ratio)}">${pct(x)}</span></div>
         <div class="bar bar-sm"><div class="bar-fill" data-w="${barW(x)}"></div></div>
-        ${state.dsr !== 'ALL' ? '' : `<div class="bu-split">${TYPES.map(t => { const g = r.groups[t.code].bu[b.code];
-          return `<span>${esc(t.name)} <b class="${statusOf(g.ratio)}-txt">${g.target ? fmtPct(g.ratio) : (g.actual ? fmtJt(g.actual) : '-')}</b></span>`; }).join('')}</div>`}
       </div>`; }).join('')}
     </div>`;
 
@@ -579,6 +577,7 @@ function cardHTML(kpi, r) {
     ${incentiveHtml}
     <button type="button" class="detail-btn" aria-expanded="false">Klik di sini untuk lihat detail <span class="caret">▾</span></button>
     <div class="acc"><div class="acc-inner">
+      <div class="acc-tools"><button type="button" class="expand-btn" data-title="${esc(kpi.name)}" aria-label="Lihat tabel ${esc(kpi.name)} layar penuh">⛶ Lihat layar penuh</button></div>
       <div class="table-wrap"><table>
         <thead><tr><th>#</th><th>DSR</th>${showDt ? '<th>DT</th>' : ''}<th class="num">Actual</th><th class="num">Target</th><th class="num">%</th>${withBu ? BUS.map(b => `<th class="num">${esc(b.short)}</th>`).join('') : ''}${state.showIncentive ? '<th class="num">Insentif</th>' : ''}</tr></thead>
         <tbody>${rowsHtml}${nonDsrRow}${totalRow}</tbody>
@@ -623,6 +622,22 @@ function render(withFade = true) {
   if (withFade) { grid.classList.add('fading'); setTimeout(draw, 200); } else draw();
 }
 
+/* ===== 9b. TABEL LAYAR PENUH ===== */
+function openTableModal(title, table) {
+  if (!table) return;
+  const scope = $('scopeTitle').textContent;
+  $('tmTitle').textContent = `${title} · ${scope}`;
+  $('tmBody').innerHTML = '';
+  $('tmBody').appendChild(table.cloneNode(true));
+  $('tableModal').classList.add('show');
+  document.body.style.overflow = 'hidden';
+  $('tmClose').focus();
+}
+function closeTableModal() {
+  $('tableModal').classList.remove('show');
+  document.body.style.overflow = '';
+}
+
 /* ===== 10. EVENT ===== */
 function bindEvents() {
   $('dtTabs').addEventListener('click', e => {
@@ -633,11 +648,16 @@ function bindEvents() {
   $('dsrSelect').addEventListener('change', e => { state.dsr = e.target.value; render(); });
   $('incentiveChk').addEventListener('change', e => { state.showIncentive = e.target.checked; render(); });
   $('kpiGrid').addEventListener('click', e => {
+    const x = e.target.closest('.expand-btn');
+    if (x) { openTableModal(x.dataset.title, x.closest('.card').querySelector('.table-wrap table')); return; }
     const b = e.target.closest('.detail-btn'); if (!b) return;
     const open = b.closest('.card').classList.toggle('open');
     b.setAttribute('aria-expanded', open);
   });
   $('refreshBtn').addEventListener('click', loadAll);
+  $('tmClose').addEventListener('click', closeTableModal);
+  $('tableModal').addEventListener('click', e => { if (e.target.id === 'tableModal') closeTableModal(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('tableModal').classList.contains('show')) closeTableModal(); });
   $('fsBtn').addEventListener('click', () => {
     if (!document.fullscreenElement) {
       (document.documentElement.requestFullscreen ? document.documentElement.requestFullscreen() : Promise.reject())
