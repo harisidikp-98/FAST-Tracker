@@ -321,3 +321,45 @@ tr.row-ok td { background: #f0fdf4; }
 td.gap, .gap { color: var(--red); font-weight: 700; }
 td.gap-ok, .gap-ok { color: var(--green); font-weight: 800; }
 #psDsrWrap[hidden] { display: none !important; }
+
+/* ===== Link dari kartu Availability / Digitization ===== */
+.link-btn { border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; text-align: inherit; }
+.link-btn:hover, .link-btn:focus-visible { color: var(--accent); text-decoration-style: solid; }
+.card-detail .link-btn { font-weight: 700; }
+
+/* ===== Daftar toko panel: tampilan rapat & seragam ===== */
+.out-block-tools { display: flex; gap: 8px; flex-wrap: wrap; }
+table.compact { font-size: 11px; }
+table.compact th, table.compact td { padding: 4px 8px; line-height: 1.3; }
+table.compact td, table.compact .mono { font-size: 11px; color: #334155; }
+table.compact td.wrap { min-width: 150px; }
+table.compact .pill, table.compact .type-chip { font-size: 10px; padding: 1px 6px; }
+.tmodal-body table.compact { font-size: 12px; }
+.tmodal-body table.compact th, .tmodal-body table.compact td { padding: 5px 10px; font-size: 12px; }
+
+/* Header filter gaya Excel */
+th.fcol { cursor: pointer; user-select: none; white-space: nowrap; }
+th.fcol:hover { color: var(--accent); background: #eef2ff; }
+th.fcol .fbtn { display: inline-block; margin-left: 4px; font-size: 10px; color: #94a3b8; border: 1px solid var(--line); border-radius: 4px; padding: 0 3px; line-height: 14px; background: #fff; }
+th.fcol.f-on { color: var(--accent); }
+th.fcol.f-on .fbtn { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* Popover filter / kolom */
+.fpop { position: fixed; z-index: 95; width: 270px; max-width: calc(100vw - 16px); background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 14px 40px rgba(15,23,42,.18); padding: 10px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.fpop[hidden] { display: none; }
+.fpop-head { font-weight: 800; font-size: 13px; padding: 2px 2px 4px; border-bottom: 1px solid var(--line); }
+.fpop-sort { display: flex; flex-direction: column; gap: 2px; }
+.fpop-sort button { border: 0; background: none; text-align: left; padding: 6px 8px; border-radius: 6px; font-weight: 700; font-size: 12px; color: #334155; cursor: pointer; }
+.fpop-sort button:hover { background: #f1f5f9; }
+.fpop-search { height: 32px; border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; font-size: 12px; font-family: inherit; }
+.fpop-list { max-height: 240px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; padding: 4px; }
+.fpop-item { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
+.fpop-item:hover { background: #f8fafc; }
+.fpop-item[hidden] { display: none; }
+.fpop-item span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.fpop-item em { font-style: normal; color: var(--muted); font-size: 11px; }
+.fpop-all { font-weight: 700; }
+.fpop-foot { display: flex; justify-content: space-between; gap: 6px; }
+.fpop-foot button { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 7px 12px; font-weight: 700; font-size: 12px; cursor: pointer; font-family: inherit; }
+.fpop-foot button.primary { background: var(--ink); border-color: var(--ink); color: #fff; }
+.fpop-foot button:disabled { opacity: .45; cursor: not-allowed; }

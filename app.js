@@ -87,7 +87,7 @@ function normBU(v) {
 }
 
 /* ===== 4. STATE & UTIL ===== */
-const state = { page: 'Dashboard', outlet: { tab: 'perf', q: '', psStatus: 'all', psDsr: 'ALL', limit: 200, sort: { perf: { key: 'gsv', dir: -1 }, ps: { key: 'dsr', dir: 1 } } }, data: {}, ps: { status: 'none', rows: [], date: null }, dt: 'ALL', dsr: 'ALL', showIncentive: false, laju: 0, loading: false };
+const state = { page: 'Dashboard', outlet: { tab: 'perf', q: '', psStatus: 'all', psDsr: 'ALL', psFilter: {}, psHidden: new Set(), limit: 200, sort: { perf: { key: 'gsv', dir: -1 }, ps: { key: 'dsr', dir: 1 } } }, data: {}, ps: { status: 'none', rows: [], date: null }, dt: 'ALL', dsr: 'ALL', showIncentive: false, laju: 0, loading: false };
 const $ = id => document.getElementById(id);
 const nf = new Intl.NumberFormat('id-ID');
 const fmtNum = n => nf.format(Math.round(n || 0));
@@ -628,6 +628,9 @@ function cardHTML(kpi, r) {
     : `${fmtNum(r.actual)}${hasT ? ` dari ${fmtNum(r.target)}` : ''} ${esc(kpi.unit)}`;
   const showDt = state.dt === 'ALL';
   const withBu = kpi.source === 'omset';
+  // Availability & Digitization: nama salesman / jumlah toko panel bisa diklik → Daftar toko panel
+  const linkPs = kpi.source === 'avail' || kpi.source === 'digi';
+  const goBtn = (key, text, title) => linkPs ? `<button type="button" class="link-btn" data-goto-ps="${esc(key)}" title="${esc(title)}">${text}</button>` : text;
   const withGap = kpi.source === 'omset' || kpi.source === 'bills';   // kolom "Kekurangan"
   const cols = 5 + (showDt ? 1 : 0) + (state.showIncentive ? 1 : 0) + (withBu ? BUS.length : 0) + (withGap ? 1 : 0);
   // Kekurangan = target − actual (0 jika sudah tercapai)
@@ -671,10 +674,10 @@ function cardHTML(kpi, r) {
   const dsrRow = (p, n) => `
       <tr>
         <td>${n}</td>
-        <td>${esc(p.name)}</td>
+        <td>${goBtn(p.dt + '|' + p.code, esc(p.name), 'Lihat daftar toko panel ' + p.name)}</td>
         ${showDt ? `<td>${esc(dtByCode(p.dt).short)}</td>` : ''}
         <td class="num">${fmt(p.actual)}</td>
-        <td class="num">${p.target ? fmt(p.target) : '-'}</td>
+        <td class="num">${p.target ? goBtn(p.dt + '|' + p.code, fmt(p.target), 'Lihat daftar toko panel ' + p.name) : '-'}</td>
         <td class="num"><span class="pill ${statusOf(p.ratio)}">${pct(p)}</span></td>
         ${withGap ? gapCell(p) : ''}
         ${withBu ? BUS.map(b => `<td class="num">${buCell(p.bu[b.code])}</td>`).join('') : ''}
@@ -684,7 +687,7 @@ function cardHTML(kpi, r) {
       <tr class="grp">
         <td></td><td>${esc(label)}</td>${showDt ? '<td></td>' : ''}
         <td class="num">${fmt(g.actual)}</td>
-        <td class="num">${g.target ? fmt(g.target) : '-'}</td>
+        <td class="num">${g.target ? goBtn('ALL', fmt(g.target), 'Lihat semua toko panel') : '-'}</td>
         <td class="num"><span class="pill ${statusOf(g.ratio)}">${pct(g)}</span></td>
         ${withGap ? gapCell(g) : ''}
         ${withBu ? BUS.map(b => `<td class="num">${buCell(g.bu[b.code])}</td>`).join('') : ''}
@@ -698,7 +701,7 @@ function cardHTML(kpi, r) {
     rowsHtml += items.map((p, i) => dsrRow(p, i + 1)).join('');
   });
   if (!rowsHtml) rowsHtml = `<tr><td colspan="${cols}" class="empty">Tidak ada data.</td></tr>`;
-  const nonDsrRow = (r.nonDsr || r.nonDsrTarget) ? `<tr class="subtotal"><td></td><td>${isPs ? 'Toko tanpa DSR' : 'Non-DSR (Shopsales, dll.)'}</td>${showDt ? '<td></td>' : ''}<td class="num">${fmt(r.nonDsr)}</td><td class="num">${r.nonDsrTarget ? fmt(r.nonDsrTarget) : ''}</td><td></td>${withGap ? '<td></td>' : ''}${withBu ? BUS.map(() => '<td></td>').join('') : ''}${state.showIncentive ? '<td></td>' : ''}</tr>` : '';
+  const nonDsrRow = (r.nonDsr || r.nonDsrTarget) ? `<tr class="subtotal"><td></td><td>${isPs ? 'Toko tanpa DSR' : 'Non-DSR (Shopsales, dll.)'}</td>${showDt ? '<td></td>' : ''}<td class="num">${fmt(r.nonDsr)}</td><td class="num">${r.nonDsrTarget ? (state.dt !== 'ALL' ? goBtn(state.dt + '|__none', fmt(r.nonDsrTarget), 'Lihat toko tanpa DSR') : fmt(r.nonDsrTarget)) : ''}</td><td></td>${withGap ? '<td></td>' : ''}${withBu ? BUS.map(() => '<td></td>').join('') : ''}${state.showIncentive ? '<td></td>' : ''}</tr>` : '';
   const totalRow = state.dsr === 'ALL' && r.list.length ? groupRow('TOTAL', r).replace('class="grp"', 'class="grp grp-total"') : '';
   const incentiveHtml = !state.showIncentive ? '' : kpi.incentive
     ? `<div class="incentive">Est. insentif: ${fmtRp(r.incentive)} (${r.list.filter(p => p.incentive).length} DSR lolos)</div>`
@@ -723,7 +726,7 @@ function cardHTML(kpi, r) {
     <div class="card-name">${esc(kpi.name)}</div>
     <div class="card-date">${isPs ? 'Update' : 'Data s.d.'} ${shortDate(r.lastDate)}</div>
     ${hasT ? `<div class="card-pct" data-target="${r.ratio}">0,0%</div>` : `<div class="card-pct">—</div>`}
-    <div class="card-detail">${detail}</div>
+    <div class="card-detail">${linkPs ? goBtn('ALL', detail, 'Lihat daftar toko panel') : detail}</div>
     ${hasT ? '' : `<div class="pending-note">${isPs ? 'Tidak ada toko panel.' : 'Target belum diisi di file target.'}</div>`}
     <div class="bar"><div class="bar-fill" data-w="${hasT ? barW(r) : 0}"></div></div>
     ${segBlock}
@@ -804,6 +807,7 @@ const PAGES = ['Dashboard', 'Outlet'];
 const OUT_LIMIT = 200;   // jumlah baris awal yang ditampilkan (sisanya via tombol)
 
 function showPage(page) {
+  closePop();
   state.page = page;
   $('pageTitle').textContent = page;
   $('kpiGrid').hidden = page !== 'Dashboard';
@@ -829,6 +833,11 @@ function sortRows(rows, cols, sortState) {
 function tableHTML(id, title, cols, rows, sortState, opts = {}) {
   const shown = opts.limit ? rows.slice(0, opts.limit) : rows;
   const head = cols.map(c => {
+    if (opts.filter && c.get) {   // header bergaya filter Excel
+      const on = !!opts.filter[c.key];
+      const so = sortState && sortState.key === c.key ? (sortState.dir > 0 ? ' ↑' : ' ↓') : '';
+      return `<th class="${c.num ? 'num ' : ''}fcol${on ? ' f-on' : ''}" data-fcol="${c.key}" tabindex="0" aria-haspopup="dialog" title="Klik untuk filter / urutkan">${esc(c.label)}${so}<span class="fbtn" aria-hidden="true">${on ? '⧩' : '▾'}</span></th>`;
+    }
     const on = sortState && c.get && sortState.key === c.key;
     const arrow = on ? (sortState.dir > 0 ? ' ▲' : ' ▼') : '';
     return `<th class="${c.num ? 'num' : ''}${c.get && sortState ? ' sortable' : ''}" ${c.get && sortState ? `data-sort="${c.key}" data-table="${id}" tabindex="0" aria-sort="${on ? (sortState.dir > 0 ? 'ascending' : 'descending') : 'none'}"` : ''}>${esc(c.label)}${arrow}</th>`;
@@ -838,12 +847,12 @@ function tableHTML(id, title, cols, rows, sortState, opts = {}) {
   const more = opts.limit && rows.length > opts.limit
     ? `<button type="button" class="more-btn">Tampilkan semua (${fmtNum(rows.length)} baris)</button>` : '';
   return `
-    <div class="out-block">
+    <div class="out-block${opts.blockCls ? ' ' + opts.blockCls : ''}"${opts.blockId ? ` id="${opts.blockId}"` : ''}>
       <div class="out-block-head">
         <h3>${esc(title)}</h3>
-        <button type="button" class="expand-btn" data-title="${esc(title)}">⛶ Lihat layar penuh</button>
+        <div class="out-block-tools">${opts.extraBtn || ''}<button type="button" class="expand-btn" data-title="${esc(title)}">⛶ Lihat layar penuh</button></div>
       </div>
-      <div class="table-wrap out-table"><table>
+      <div class="table-wrap out-table"><table class="${opts.tableCls || ''}">
         <thead><tr>${head}</tr></thead><tbody>${body}${opts.foot || ''}</tbody>
       </table></div>
       ${more}
@@ -1023,9 +1032,18 @@ function renderOutletPs() {
   const st = state.outlet.psStatus;
   const filtered = all.filter(r => matchQ(r.outletCode, r.outletName) && (st === 'all' || (st === 'perfect') === r.perfect));
   const cols = PS_COLS(showDt);
-  const rows = sortRows(filtered, cols, state.outlet.sort.ps);
-  html += `<p class="out-note">Menampilkan ${fmtNum(rows.length)} dari ${fmtNum(all.length)} toko panel${state.outlet.q ? ` untuk pencarian "<b>${esc(state.outlet.q)}</b>"` : ''}.</p>`;
-  html += tableHTML('ps', 'Daftar toko panel Perfect Store', cols, rows, state.outlet.sort.ps, { limit: state.outlet.limit, empty: 'Toko tidak ditemukan.' });
+  psCtx = { base: filtered, cols };
+  const rows = sortRows(applyColFilters(filtered, cols), cols, state.outlet.sort.ps);
+  const visCols = cols.filter(c => !state.outlet.psHidden.has(c.key));
+  const fkeys = cols.filter(c => state.outlet.psFilter[c.key]).map(c => c.label);
+  const nHide = cols.filter(c => state.outlet.psHidden.has(c.key)).length;
+  html += `<p class="out-note">Menampilkan ${fmtNum(rows.length)} dari ${fmtNum(all.length)} toko panel${state.outlet.q ? ` untuk pencarian "<b>${esc(state.outlet.q)}</b>"` : ''}.`
+    + (fkeys.length ? ` Filter kolom aktif: <b>${fkeys.map(esc).join(', ')}</b> · <button type="button" class="link-btn" data-clear-filters>Hapus semua filter</button>` : ` Klik judul kolom untuk filter / urutkan.`)
+    + (nHide ? ` · ${nHide} kolom disembunyikan` : '') + `</p>`;
+  html += tableHTML('ps', 'Daftar toko panel Perfect Store', visCols, rows, state.outlet.sort.ps, {
+    limit: state.outlet.limit, empty: 'Toko tidak ditemukan.', filter: state.outlet.psFilter,
+    tableCls: 'compact', blockCls: 'ps-list', blockId: 'psListBlock',
+    extraBtn: `<button type="button" class="expand-btn" data-colpick aria-haspopup="dialog">☷ Kolom${nHide ? ` (${nHide} disembunyikan)` : ''}</button>` });
   return html;
 }
 /* Isi dropdown "Filter DSR" dari toko panel yang ada di cakupan DT / salesman saat ini */
@@ -1052,22 +1070,35 @@ function fillPsDsrSelect(rows) {
 function PS_COLS(showDt) {
   return [
     { key: 'no', label: '#', html: (r, i) => i + 1 },
-    { key: 'code', label: 'Kode Toko', get: r => r.outletCode, html: r => `<span class="mono">${esc(r.outletCode)}</span>` },
-    { key: 'name', label: 'Nama Toko', get: r => r.outletName, html: r => esc(r.outletName), wrap: true },
-    ...(showDt ? [{ key: 'dt', label: 'DT', get: r => dtShort(r.dt), html: r => dtShort(r.dt) }] : []),
-    { key: 'dsr', label: 'DSR', get: r => r.dsr || '\uffff', html: r => esc(r.dsr || 'Tanpa DSR'), wrap: true },
-    { key: 'pjp', label: 'PJP', get: r => r.pjp, html: r => esc(r.pjp || '-') },
+    { key: 'code', label: 'Kode Toko', get: r => r.outletCode,
+      fv: r => r.outletCode,  html: r => `<span class="mono">${esc(r.outletCode)}</span>` },
+    { key: 'name', label: 'Nama Toko', get: r => r.outletName,
+      fv: r => r.outletName,  html: r => esc(r.outletName), wrap: true },
+    ...(showDt ? [{ key: 'dt', label: 'DT', get: r => dtByCode(r.dt)?.short || r.dt, html: r => dtShort(r.dt) }] : []),
+    { key: 'dsr', label: 'DSR', get: r => r.dsr || '\uffff',
+      fv: r => r.dsr || 'Tanpa DSR',  html: r => esc(r.dsr || 'Tanpa DSR'), wrap: true },
+    { key: 'pjp', label: 'PJP', get: r => r.pjp,
+      fv: r => r.pjp || '-',  html: r => esc(r.pjp || '-') },
     { key: 'type', label: 'Tipe', get: r => r.full ? 'FULL' : 'LITE', html: r => `<span class="type-chip ${r.full ? 'full' : 'lite'}">${r.full ? 'FULL' : 'LITE'}</span>` },
-    { key: 'pa', label: 'Avail', get: r => +r.pa, html: r => yesNo(r.pa) },
-    { key: 'pv', label: 'Visib', get: r => +r.pv, html: r => yesNo(r.pv) },
-    { key: 'pd', label: 'Digi', get: r => +r.pd, html: r => yesNo(r.pd) },
-    { key: 'perfect', label: 'Perfect Store', get: r => +r.perfect, html: r => r.perfect ? '<span class="pill s-green">PERFECT</span>' : '<span class="pill s-red">BELUM</span>' },
-    { key: 'missing', label: 'Yang kurang', get: r => r.missing, html: r => esc(r.missing || '-'), wrap: true },
-    { key: 'asTarget', label: 'Assortment Target', num: true, get: r => r.asTarget, html: r => r.asTarget ? fmtNum(r.asTarget) : '-' },
-    { key: 'asAch', label: 'Assortment Achieve', num: true, get: r => r.asAch, html: r => fmtNum(r.asAch) },
+    { key: 'pa', label: 'Avail', get: r => +r.pa,
+      fv: r => r.pa ? '✓ Ya' : '✗ Tidak',  html: r => yesNo(r.pa) },
+    { key: 'pv', label: 'Visib', get: r => +r.pv,
+      fv: r => r.pv ? '✓ Ya' : '✗ Tidak',  html: r => yesNo(r.pv) },
+    { key: 'pd', label: 'Digi', get: r => +r.pd,
+      fv: r => r.pd ? '✓ Ya' : '✗ Tidak',  html: r => yesNo(r.pd) },
+    { key: 'perfect', label: 'Perfect Store', get: r => +r.perfect,
+      fv: r => r.perfect ? 'PERFECT' : 'BELUM',  html: r => r.perfect ? '<span class="pill s-green">PERFECT</span>' : '<span class="pill s-red">BELUM</span>' },
+    { key: 'missing', label: 'Yang kurang', get: r => r.missing,
+      fv: r => r.missing || '-',  html: r => esc(r.missing || '-'), wrap: true },
+    { key: 'asTarget', label: 'Assortment Target', num: true, get: r => r.asTarget,
+      fv: r => r.asTarget ? fmtNum(r.asTarget) : '-',  html: r => r.asTarget ? fmtNum(r.asTarget) : '-' },
+    { key: 'asAch', label: 'Assortment Achieve', num: true, get: r => r.asAch,
+      fv: r => fmtNum(r.asAch),  html: r => fmtNum(r.asAch) },
     { key: 'asPct', label: '% Assortment', num: true, get: r => r.asTarget ? r.asAch / r.asTarget : -1,
+      fv: r => r.asTarget ? fmtPct(r.asAch / r.asTarget) : '-', 
       html: r => r.asTarget ? `<span class="pill ${asStatus(r.asAch / r.asTarget)}">${fmtPct(r.asAch / r.asTarget)}</span>` : '-' },
     { key: 'asGap', label: 'Kekurangan Assortment', num: true, get: r => Math.max(0, r.asTarget - r.asAch),
+      fv: r => !r.asTarget ? '-' : r.asTarget - r.asAch > 0 ? fmtNum(r.asTarget - r.asAch) : 'Tercapai', 
       html: r => !r.asTarget ? '-' : r.asTarget - r.asAch > 0 ? `<span class="gap">${fmtNum(r.asTarget - r.asAch)}</span>` : '<span class="gap-ok">Tercapai</span>' }
   ];
 }
@@ -1099,27 +1130,158 @@ function bindOutletEvents() {
     renderOutletPage();
   };
   $('outletBody').addEventListener('click', e => {
-    const x = e.target.closest('.expand-btn');
+    const x = e.target.closest('.expand-btn:not([data-colpick])');
     if (x) { openTableModal(x.dataset.title, x.closest('.out-block').querySelector('table')); return; }
     if (e.target.closest('.more-btn')) { state.outlet.limit = Infinity; renderOutletPage(); return; }
+    const fth = e.target.closest('th[data-fcol]'); if (fth) { openFilterPop(fth); return; }
+    const cp = e.target.closest('[data-colpick]'); if (cp) { openColPop(cp); return; }
+    if (e.target.closest('[data-clear-filters]')) { state.outlet.psFilter = {}; renderOutletPage(); return; }
     const th = e.target.closest('th[data-sort]'); if (th) sortBy(th);
   });
   $('outletBody').addEventListener('keydown', e => {
     const th = e.target.closest('th[data-sort]');
     if (th && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); sortBy(th); }
+    const fth = e.target.closest('th[data-fcol]');
+    if (fth && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openFilterPop(fth); }
   });
+}
+
+/* ===== 9d. FILTER KOLOM (gaya Excel) & SEMBUNYIKAN KOLOM — Daftar toko panel ===== */
+let psCtx = { base: [], cols: [] };
+const HIDE_KEY = 'fast.psHidden';
+function loadHidden() { try { return new Set(JSON.parse(localStorage.getItem(HIDE_KEY) || '[]')); } catch (e) { return new Set(); } }
+function saveHidden() { try { localStorage.setItem(HIDE_KEY, JSON.stringify([...state.outlet.psHidden])); } catch (e) { /* abaikan */ } }
+const fvOf = (c, r) => String(c.fv ? c.fv(r) : (c.get(r) ?? ''));
+function applyColFilters(rows, cols, exceptKey) {
+  const f = state.outlet.psFilter;
+  const act = cols.filter(c => c.get && c.key !== exceptKey && f[c.key]).map(c => [c, new Set(f[c.key])]);
+  return act.length ? rows.filter(r => act.every(([c, set]) => set.has(fvOf(c, r)))) : rows;
+}
+function popEl() {
+  let p = $('fpop');
+  if (!p) {
+    p = document.createElement('div'); p.id = 'fpop'; p.className = 'fpop'; p.setAttribute('role', 'dialog'); p.hidden = true;
+    document.body.appendChild(p); bindPop(p);
+  }
+  return p;
+}
+function closePop() { const p = $('fpop'); if (p && !p.hidden) { p.hidden = true; p.innerHTML = ''; p.dataset.key = ''; } }
+function placePop(p, anchor) {
+  p.hidden = false;
+  const r = anchor.getBoundingClientRect(), w = p.offsetWidth, h = p.offsetHeight;
+  let top = r.bottom + 4;
+  if (top + h > innerHeight - 8) top = Math.max(8, r.top - h - 4);
+  p.style.left = Math.min(Math.max(8, r.left), Math.max(8, innerWidth - w - 8)) + 'px';
+  p.style.top = top + 'px';
+}
+function openFilterPop(th) {
+  const key = th.dataset.fcol, c = psCtx.cols.find(x => x.key === key);
+  if (!c) return;
+  const p = popEl();
+  if (!p.hidden && p.dataset.key === key) { closePop(); return; }
+  const m = new Map();
+  applyColFilters(psCtx.base, psCtx.cols, key).forEach(r => {
+    const v = fvOf(c, r), e = m.get(v);
+    if (e) e.n++; else m.set(v, { v, n: 1, s: c.get(r) });
+  });
+  const vals = [...m.values()].sort((a, b) => (typeof a.s === 'number' && typeof b.s === 'number') ? a.s - b.s : a.v.localeCompare(b.v, 'id', { numeric: true }));
+  const cur = state.outlet.psFilter[key], curSet = cur ? new Set(cur) : null;
+  p.innerHTML = `
+    <div class="fpop-head">${esc(c.label)}</div>
+    <div class="fpop-sort">
+      <button type="button" data-psort="1">↑ Urutkan ${c.num ? 'terkecil' : 'A → Z'}</button>
+      <button type="button" data-psort="-1">↓ Urutkan ${c.num ? 'terbesar' : 'Z → A'}</button>
+    </div>
+    <input type="search" class="fpop-search" placeholder="Cari nilai…" aria-label="Cari nilai di kolom ${esc(c.label)}">
+    <label class="fpop-item fpop-all"><input type="checkbox" data-all> <span>(Pilih semua)</span></label>
+    <div class="fpop-list">${vals.length ? vals.map(o => `<label class="fpop-item"><input type="checkbox" value="${esc(o.v)}" ${!curSet || curSet.has(o.v) ? 'checked' : ''}> <span>${esc(o.v === '' ? '(kosong)' : o.v)}</span><em>${fmtNum(o.n)}</em></label>`).join('') : '<div class="empty">Tidak ada nilai.</div>'}</div>
+    <div class="fpop-foot"><button type="button" data-fclear>Hapus filter</button><button type="button" class="primary" data-fapply>Terapkan</button></div>`;
+  p.dataset.key = key;
+  syncPopAll(p);
+  placePop(p, th);
+  p.querySelector('.fpop-search').focus();
+}
+function openColPop(btn) {
+  const p = popEl();
+  if (!p.hidden && p.dataset.key === '__cols') { closePop(); return; }
+  const cols = psCtx.cols.filter(c => c.key !== 'no');
+  p.innerHTML = `
+    <div class="fpop-head">Tampilkan / sembunyikan kolom</div>
+    <div class="fpop-list">${cols.map(c => `<label class="fpop-item"><input type="checkbox" data-colkey="${c.key}" ${state.outlet.psHidden.has(c.key) ? '' : 'checked'}> <span>${esc(c.label)}</span></label>`).join('')}</div>
+    <div class="fpop-foot"><button type="button" data-colshowall>Tampilkan semua</button><button type="button" class="primary" data-colclose>Selesai</button></div>`;
+  p.dataset.key = '__cols';
+  placePop(p, btn);
+}
+function syncPopAll(p) {
+  const items = [...p.querySelectorAll('.fpop-list input[type=checkbox]')].filter(i => !i.closest('.fpop-item').hidden);
+  const all = p.querySelector('[data-all]');
+  if (all) { const n = items.filter(i => i.checked).length; all.checked = items.length > 0 && n === items.length; all.indeterminate = n > 0 && n < items.length; }
+  const ap = p.querySelector('[data-fapply]');
+  if (ap) ap.disabled = !p.querySelector('.fpop-list input:checked');
+}
+function bindPop(p) {
+  p.addEventListener('input', e => {
+    if (!e.target.classList.contains('fpop-search')) return;
+    const q = up(e.target.value);
+    p.querySelectorAll('.fpop-list .fpop-item').forEach(l => { l.hidden = q && !up(l.textContent).includes(q); });
+    syncPopAll(p);
+  });
+  p.addEventListener('change', e => {
+    const t = e.target;
+    if (t.matches('[data-all]')) { p.querySelectorAll('.fpop-list .fpop-item:not([hidden]) input').forEach(i => { i.checked = t.checked; }); syncPopAll(p); return; }
+    if (t.matches('[data-colkey]')) {
+      t.checked ? state.outlet.psHidden.delete(t.dataset.colkey) : state.outlet.psHidden.add(t.dataset.colkey);
+      saveHidden(); renderOutletPage(); return;
+    }
+    syncPopAll(p);
+  });
+  p.addEventListener('click', e => {
+    const key = p.dataset.key;
+    const so = e.target.closest('[data-psort]');
+    if (so) { state.outlet.sort.ps = { key, dir: +so.dataset.psort }; closePop(); renderOutletPage(); return; }
+    if (e.target.closest('[data-fclear]')) { delete state.outlet.psFilter[key]; closePop(); renderOutletPage(); return; }
+    if (e.target.closest('[data-fapply]')) {
+      const q = p.querySelector('.fpop-search').value.trim();
+      const items = [...p.querySelectorAll('.fpop-list input[type=checkbox]')];
+      const chosen = items.filter(i => i.checked && !(q && i.closest('.fpop-item').hidden)).map(i => i.value);
+      if (!q && chosen.length === items.length) delete state.outlet.psFilter[key];
+      else state.outlet.psFilter[key] = chosen;
+      state.outlet.limit = OUT_LIMIT; closePop(); renderOutletPage(); return;
+    }
+    if (e.target.closest('[data-colshowall]')) { state.outlet.psHidden.clear(); saveHidden(); p.querySelectorAll('[data-colkey]').forEach(i => { i.checked = true; }); renderOutletPage(); return; }
+    if (e.target.closest('[data-colclose]')) closePop();
+  });
+  p.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { closePop(); return; }
+    if (e.key === 'Enter' && e.target.classList.contains('fpop-search')) { e.preventDefault(); const ap = p.querySelector('[data-fapply]'); if (ap && !ap.disabled) ap.click(); }
+  });
+  document.addEventListener('mousedown', e => { if (!p.hidden && !p.contains(e.target) && !e.target.closest('th[data-fcol], [data-colpick]')) closePop(); });
+  window.addEventListener('scroll', e => { if (!p.hidden && !p.contains(e.target)) closePop(); }, true);
+  window.addEventListener('resize', closePop);
+}
+
+/* Dari kartu Availability / Digitization → Daftar toko panel Perfect Store */
+function goToPs(key) {
+  closeTableModal(); closePop();
+  Object.assign(state.outlet, { tab: 'ps', psDsr: key || 'ALL', q: '', psStatus: 'all', psFilter: {}, limit: OUT_LIMIT });
+  $('outletSearch').value = ''; $('psStatus').value = 'all';
+  document.querySelectorAll('.nav-item').forEach(x => x.classList.toggle('active', x.dataset.page === 'Outlet'));
+  showPage('Outlet');
+  setTimeout(() => { const b = $('psListBlock'); if (b) b.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 300);
 }
 
 /* ===== 10. EVENT ===== */
 function bindEvents() {
   $('dtTabs').addEventListener('click', e => {
     const b = e.target.closest('.tab'); if (!b || b.dataset.dt === state.dt || state.loading) return;
-    state.dt = b.dataset.dt; state.dsr = 'ALL'; state.outlet.psDsr = 'ALL';
+    state.dt = b.dataset.dt; state.dsr = 'ALL'; state.outlet.psDsr = 'ALL'; state.outlet.psFilter = {}; closePop();
     renderTabs(); renderDsrSelect(); render();
   });
-  $('dsrSelect').addEventListener('change', e => { state.dsr = e.target.value; state.outlet.psDsr = 'ALL'; render(); });
+  $('dsrSelect').addEventListener('change', e => { state.dsr = e.target.value; state.outlet.psDsr = 'ALL'; state.outlet.psFilter = {}; closePop(); render(); });
   $('incentiveChk').addEventListener('change', e => { state.showIncentive = e.target.checked; render(); });
   $('kpiGrid').addEventListener('click', e => {
+    const go = e.target.closest('[data-goto-ps]');
+    if (go) { goToPs(go.dataset.gotoPs); return; }
     const x = e.target.closest('.expand-btn');
     if (x) { openTableModal(x.dataset.title, x.closest('.card').querySelector('.table-wrap table')); return; }
     const b = e.target.closest('.detail-btn'); if (!b) return;
@@ -1128,6 +1290,7 @@ function bindEvents() {
   });
   $('refreshBtn').addEventListener('click', loadAll);
   $('tmClose').addEventListener('click', closeTableModal);
+  $('tmBody').addEventListener('click', e => { const go = e.target.closest('[data-goto-ps]'); if (go) goToPs(go.dataset.gotoPs); });
   $('tableModal').addEventListener('click', e => { if (e.target.id === 'tableModal') closeTableModal(); });
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('tableModal').classList.contains('show')) closeTableModal(); });
   $('fsBtn').addEventListener('click', () => {
@@ -1160,6 +1323,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('userName').textContent = CONFIG.userName;
   document.title = CONFIG.appName;
   if (window.lucide) lucide.createIcons();
+  state.outlet.psHidden = loadHidden();
   bindEvents();
   loadAll();
 });
