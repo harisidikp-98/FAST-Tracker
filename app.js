@@ -15,6 +15,8 @@ const CONFIG = {
   holidays: ['2026-12-25'],
   // UBAH: file Perfect Store (1 file untuk semua DT, template "TABLE PERFECT STORE BY STORE")
   psFile: 'data/perfect_store.xlsx',
+  // UBAH: Digitization di halaman Outlet dianggap CAPAI (hijau) bila ≥ angka ini
+  digiTarget: 0.4,
   greenMin: 1.0,   // pencapaian ≥ 100% laju waktu → hijau
   yellowMin: 0.8   // 80–99% laju waktu → kuning; di bawahnya merah
 };
@@ -85,7 +87,7 @@ function normBU(v) {
 }
 
 /* ===== 4. STATE & UTIL ===== */
-const state = { page: 'Dashboard', outlet: { tab: 'perf', q: '', psStatus: 'all', limit: 200, sort: { perf: { key: 'gsv', dir: -1 }, ps: { key: 'dsr', dir: 1 } } }, data: {}, ps: { status: 'none', rows: [], date: null }, dt: 'ALL', dsr: 'ALL', showIncentive: false, laju: 0, loading: false };
+const state = { page: 'Dashboard', outlet: { tab: 'perf', q: '', psStatus: 'all', psDsr: 'ALL', limit: 200, sort: { perf: { key: 'gsv', dir: -1 }, ps: { key: 'dsr', dir: 1 } } }, data: {}, ps: { status: 'none', rows: [], date: null }, dt: 'ALL', dsr: 'ALL', showIncentive: false, laju: 0, loading: false };
 const $ = id => document.getElementById(id);
 const nf = new Intl.NumberFormat('id-ID');
 const fmtNum = n => nf.format(Math.round(n || 0));
@@ -279,7 +281,9 @@ async function loadPerfectStore() {
       panel: toNum(pick(o, 'total store panel')),
       pa: one('perfect availability'),
       pv: one('perfect visibility'),
-      pd: one('perfect digitization')
+      pd: one('perfect digitization'),
+      asTarget: toNum(pick(o, 'aassortment target', 'assortment target')),   // header asli memang "Aassortment"
+      asAch: toNum(pick(o, 'assortment achieve'))
     });
   });
   if (!rows.length) throw new Error('Format file Perfect Store tidak dikenali');
@@ -624,7 +628,14 @@ function cardHTML(kpi, r) {
     : `${fmtNum(r.actual)}${hasT ? ` dari ${fmtNum(r.target)}` : ''} ${esc(kpi.unit)}`;
   const showDt = state.dt === 'ALL';
   const withBu = kpi.source === 'omset';
-  const cols = 5 + (showDt ? 1 : 0) + (state.showIncentive ? 1 : 0) + (withBu ? BUS.length : 0);
+  const withGap = kpi.source === 'omset' || kpi.source === 'bills';   // kolom "Kekurangan"
+  const cols = 5 + (showDt ? 1 : 0) + (state.showIncentive ? 1 : 0) + (withBu ? BUS.length : 0) + (withGap ? 1 : 0);
+  // Kekurangan = target − actual (0 jika sudah tercapai)
+  const gapCell = x => {
+    if (!x || !x.target) return '<td class="num">-</td>';
+    const g = x.target - x.actual;
+    return g > 0 ? `<td class="num gap">${fmt(g)}</td>` : '<td class="num gap-ok">Tercapai</td>';
+  };
   const pct = x => x.ratio == null ? '—' : fmtPct(x.ratio);
   const barW = x => x.ratio == null ? 0 : Math.min(100, Math.max(0, x.ratio * 100));
 
@@ -665,6 +676,7 @@ function cardHTML(kpi, r) {
         <td class="num">${fmt(p.actual)}</td>
         <td class="num">${p.target ? fmt(p.target) : '-'}</td>
         <td class="num"><span class="pill ${statusOf(p.ratio)}">${pct(p)}</span></td>
+        ${withGap ? gapCell(p) : ''}
         ${withBu ? BUS.map(b => `<td class="num">${buCell(p.bu[b.code])}</td>`).join('') : ''}
         ${state.showIncentive ? `<td class="num">${p.incentive ? fmtRp(p.incentive) : '-'}</td>` : ''}
       </tr>`;
@@ -674,6 +686,7 @@ function cardHTML(kpi, r) {
         <td class="num">${fmt(g.actual)}</td>
         <td class="num">${g.target ? fmt(g.target) : '-'}</td>
         <td class="num"><span class="pill ${statusOf(g.ratio)}">${pct(g)}</span></td>
+        ${withGap ? gapCell(g) : ''}
         ${withBu ? BUS.map(b => `<td class="num">${buCell(g.bu[b.code])}</td>`).join('') : ''}
         ${state.showIncentive ? '<td></td>' : ''}
       </tr>`;
@@ -685,7 +698,7 @@ function cardHTML(kpi, r) {
     rowsHtml += items.map((p, i) => dsrRow(p, i + 1)).join('');
   });
   if (!rowsHtml) rowsHtml = `<tr><td colspan="${cols}" class="empty">Tidak ada data.</td></tr>`;
-  const nonDsrRow = (r.nonDsr || r.nonDsrTarget) ? `<tr class="subtotal"><td></td><td>${isPs ? 'Toko tanpa DSR' : 'Non-DSR (Shopsales, dll.)'}</td>${showDt ? '<td></td>' : ''}<td class="num">${fmt(r.nonDsr)}</td><td class="num">${r.nonDsrTarget ? fmt(r.nonDsrTarget) : ''}</td><td></td>${withBu ? BUS.map(() => '<td></td>').join('') : ''}${state.showIncentive ? '<td></td>' : ''}</tr>` : '';
+  const nonDsrRow = (r.nonDsr || r.nonDsrTarget) ? `<tr class="subtotal"><td></td><td>${isPs ? 'Toko tanpa DSR' : 'Non-DSR (Shopsales, dll.)'}</td>${showDt ? '<td></td>' : ''}<td class="num">${fmt(r.nonDsr)}</td><td class="num">${r.nonDsrTarget ? fmt(r.nonDsrTarget) : ''}</td><td></td>${withGap ? '<td></td>' : ''}${withBu ? BUS.map(() => '<td></td>').join('') : ''}${state.showIncentive ? '<td></td>' : ''}</tr>` : '';
   const totalRow = state.dsr === 'ALL' && r.list.length ? groupRow('TOTAL', r).replace('class="grp"', 'class="grp grp-total"') : '';
   const incentiveHtml = !state.showIncentive ? '' : kpi.incentive
     ? `<div class="incentive">Est. insentif: ${fmtRp(r.incentive)} (${r.list.filter(p => p.incentive).length} DSR lolos)</div>`
@@ -723,7 +736,7 @@ function cardHTML(kpi, r) {
     <div class="acc"><div class="acc-inner">
       <div class="acc-tools"><button type="button" class="expand-btn" data-title="${esc(kpi.name)}" aria-label="Lihat tabel ${esc(kpi.name)} layar penuh">⛶ Lihat layar penuh</button></div>
       <div class="table-wrap"><table>
-        <thead><tr><th>#</th><th>DSR</th>${showDt ? '<th>DT</th>' : ''}<th class="num">${isPs ? 'Tercapai' : 'Actual'}</th><th class="num">${isPs ? 'Panel' : 'Target'}</th><th class="num">%</th>${withBu ? BUS.map(b => `<th class="num">${esc(b.short)}</th>`).join('') : ''}${state.showIncentive ? '<th class="num">Insentif</th>' : ''}</tr></thead>
+        <thead><tr><th>#</th><th>DSR</th>${showDt ? '<th>DT</th>' : ''}<th class="num">${isPs ? 'Tercapai' : 'Actual'}</th><th class="num">${isPs ? 'Panel' : 'Target'}</th><th class="num">%</th>${withGap ? '<th class="num">Kekurangan</th>' : ''}${withBu ? BUS.map(b => `<th class="num">${esc(b.short)}</th>`).join('') : ''}${state.showIncentive ? '<th class="num">Insentif</th>' : ''}</tr></thead>
         <tbody>${rowsHtml}${nonDsrRow}${totalRow}</tbody>
       </table></div>
     </div></div>
@@ -914,8 +927,9 @@ function outletGsvMap(D) {
   (D.rows || []).forEach(r => m.set(r.outlet, (m.get(r.outlet) || 0) + r.gsv));
   return (D._gsv = m);
 }
-function psOutletRows() {
+function psOutletRows(ignoreLocal) {
   const sel = scopeDsrKey(), sc = sel ? sel.split('|')[1] : null;
+  const loc = ignoreLocal ? 'ALL' : state.outlet.psDsr;   // filter DSR lokal (dropdown di tab ini)
   const out = [];
   scopeDts().forEach(dt => {
     const D = state.data[dt.code];
@@ -924,6 +938,10 @@ function psOutletRows() {
     const gsv = D.status === 'ok' ? outletGsvMap(D) : null;
     D.ps.forEach(r => {
       if (sc && !r.codes.includes(sc)) return;
+      if (loc !== 'ALL') {
+        if (loc === dt.code + '|__none') { if (r.codes.length) return; }
+        else if (!loc.startsWith(dt.code + '|') || !r.codes.includes(loc.split('|')[1])) return;
+      }
       const perfect = psAchieved(r, 'perfect');
       out.push({ ...r, dt: dt.code, perfect, missing: perfect ? '' : psMissing(r),
         dsr: r.dsrs.map(x => x.name).join(' & '), gsv: gsv ? (gsv.get(r.outletCode) || 0) : null,
@@ -937,17 +955,30 @@ function psAgg(rows) {
   rows.forEach(r => { a.panel += r.panel; a.pa += r.pa ? 1 : 0; a.pv += r.pv ? 1 : 0; a.pd += r.pd ? 1 : 0; a.ps += r.perfect ? 1 : 0; });
   return a;
 }
-const pctPill = (n, d) => d ? `<span class="pill ${statusOf(n / d)}">${fmtPct(n / d)}</span>` : '-';
+const pctPill = (n, d, kind) => d ? `<span class="pill ${kind === 'pd' ? digiStatus(n / d) : statusOf(n / d)}">${fmtPct(n / d)}</span>` : '-';
+// Digitization: capai (hijau) bila ≥ CONFIG.digiTarget; kuning bila ≥ 80% dari target; selain itu merah
+function digiStatus(r) {
+  if (r == null) return 's-none';
+  if (r >= CONFIG.digiTarget) return 's-green';
+  if (r >= CONFIG.digiTarget * CONFIG.yellowMin) return 's-yellow';
+  return 's-red';
+}
+// Assortment per toko: hijau ≥ 100% target, kuning ≥ 80%, merah di bawahnya
+function asStatus(r) {
+  if (r == null) return 's-none';
+  return r >= 1 ? 's-green' : r >= CONFIG.yellowMin ? 's-yellow' : 's-red';
+}
 const SUM_COLS = first => [
   ...first,
   { key: 'panel', label: 'Toko Panel', num: true, get: r => r.panel, html: r => fmtNum(r.panel) },
   { key: 'pa', label: 'Availability', num: true, get: r => r.pa, html: r => `${fmtNum(r.pa)} ${pctPill(r.pa, r.panel)}` },
   { key: 'pv', label: 'Visibility', num: true, get: r => r.pv, html: r => `${fmtNum(r.pv)} ${pctPill(r.pv, r.panel)}` },
-  { key: 'pd', label: 'Digitization', num: true, get: r => r.pd, html: r => `${fmtNum(r.pd)} ${pctPill(r.pd, r.panel)}` },
+  { key: 'pd', label: 'Digitization', num: true, get: r => r.pd, html: r => `${fmtNum(r.pd)} ${pctPill(r.pd, r.panel, 'pd')}` },
   { key: 'ps', label: 'Perfect Store', num: true, get: r => r.ps, html: r => `${fmtNum(r.ps)} ${pctPill(r.ps, r.panel)}` }
 ];
 function renderOutletPs() {
-  if (state.ps.status !== 'ok') return `<div class="empty-dt"><b>Data Perfect Store belum tersedia</b>Upload file ke <code>${esc(CONFIG.psFile)}</code>.</div>`;
+  if (state.ps.status !== 'ok') { fillPsDsrSelect([]); return `<div class="empty-dt"><b>Data Perfect Store belum tersedia</b>Upload file ke <code>${esc(CONFIG.psFile)}</code>.</div>`; }
+  fillPsDsrSelect(psOutletRows(true));
   const all = psOutletRows();
   if (!all.length) return `<div class="empty-dt"><b>Tidak ada toko panel</b>untuk pilihan DT / salesman ini.</div>`;
   const showDt = state.dt === 'ALL';
@@ -958,10 +989,10 @@ function renderOutletPs() {
       ${statBox('Perfect Store', `${fmtNum(tot.ps)} <small>${fmtPct(tot.panel ? tot.ps / tot.panel : 0)}</small>`, 'FULL: A+V+D · LITE: A+V / A+D', statusOf(tot.panel ? tot.ps / tot.panel : null))}
       ${statBox('Availability', `${fmtNum(tot.pa)} <small>${fmtPct(tot.panel ? tot.pa / tot.panel : 0)}</small>`, 'toko perfect availability', statusOf(tot.panel ? tot.pa / tot.panel : null))}
       ${statBox('Visibility', `${fmtNum(tot.pv)} <small>${fmtPct(tot.panel ? tot.pv / tot.panel : 0)}</small>`, 'toko perfect visibility', statusOf(tot.panel ? tot.pv / tot.panel : null))}
-      ${statBox('Digitization', `${fmtNum(tot.pd)} <small>${fmtPct(tot.panel ? tot.pd / tot.panel : 0)}</small>`, 'toko perfect digitization', statusOf(tot.panel ? tot.pd / tot.panel : null))}
+      ${statBox('Digitization', `${fmtNum(tot.pd)} <small>${fmtPct(tot.panel ? tot.pd / tot.panel : 0)}</small>`, `toko perfect digitization · capai ≥ ${fmtPct(CONFIG.digiTarget)}`, digiStatus(tot.panel ? tot.pd / tot.panel : null))}
     </div>`;
   let html = stats;
-  const noDsr = state.dsr === 'ALL';
+  const noDsr = state.dsr === 'ALL' && state.outlet.psDsr === 'ALL';
 
   // Ringkasan per DT (Gabungan)
   if (showDt && noDsr) {
@@ -983,7 +1014,7 @@ function renderOutletPs() {
     }).sort((a, b) => (a._cls ? 1 : 0) - (b._cls ? 1 : 0) || (b.panel ? b.ps / b.panel : 0) - (a.panel ? a.ps / a.panel : 0) || b.panel - a.panel);
     const first = [{ key: 'name', label: 'Salesman', html: r => r.code ? `${esc(r.name)} <span class="muted">(${esc(r.code)})</span>` : esc(r.name) },
       ...(showDt ? [{ key: 'dt', label: 'DT', html: r => dtShort(r.dt) }] : [])];
-    const foot = `<tr class="grp grp-total"><td>TOTAL</td>${showDt ? '<td></td>' : ''}<td class="num">${fmtNum(tot.panel)}</td><td class="num">${fmtNum(tot.pa)} ${pctPill(tot.pa, tot.panel)}</td><td class="num">${fmtNum(tot.pv)} ${pctPill(tot.pv, tot.panel)}</td><td class="num">${fmtNum(tot.pd)} ${pctPill(tot.pd, tot.panel)}</td><td class="num">${fmtNum(tot.ps)} ${pctPill(tot.ps, tot.panel)}</td></tr>`;
+    const foot = `<tr class="grp grp-total"><td>TOTAL</td>${showDt ? '<td></td>' : ''}<td class="num">${fmtNum(tot.panel)}</td><td class="num">${fmtNum(tot.pa)} ${pctPill(tot.pa, tot.panel)}</td><td class="num">${fmtNum(tot.pv)} ${pctPill(tot.pv, tot.panel)}</td><td class="num">${fmtNum(tot.pd)} ${pctPill(tot.pd, tot.panel, 'pd')}</td><td class="num">${fmtNum(tot.ps)} ${pctPill(tot.ps, tot.panel)}</td></tr>`;
     html += tableHTML('sumdsr', 'Ringkasan per salesman', SUM_COLS(first), rows, null, { foot });
     html += `<p class="out-note">Toko split (2 DSR) dihitung di masing-masing salesman, 1 kali di TOTAL.</p>`;
   }
@@ -997,6 +1028,27 @@ function renderOutletPs() {
   html += tableHTML('ps', 'Daftar toko panel Perfect Store', cols, rows, state.outlet.sort.ps, { limit: state.outlet.limit, empty: 'Toko tidak ditemukan.' });
   return html;
 }
+/* Isi dropdown "Filter DSR" dari toko panel yang ada di cakupan DT / salesman saat ini */
+function fillPsDsrSelect(rows) {
+  const sel = $('psDsr'); if (!sel) return;
+  const map = new Map(); let none = new Set();
+  rows.forEach(r => {
+    if (!r.codes.length) { none.add(r.dt); return; }
+    r.codes.forEach(c => {
+      const k = r.dt + '|' + c;
+      if (map.has(k)) { map.get(k).n++; return; }
+      const s = (state.data[r.dt]?.dsrs || []).find(x => x.code === c);
+      map.set(k, { key: k, name: s ? s.name : c, code: c, dt: r.dt, n: 1 });
+    });
+  });
+  const list = [...map.values()].sort((a, b) => a.dt.localeCompare(b.dt) || a.name.localeCompare(b.name));
+  none.forEach(dt => list.push({ key: dt + '|__none', name: 'Tanpa DSR', code: '', dt, n: rows.filter(r => r.dt === dt && !r.codes.length).length }));
+  if (state.outlet.psDsr !== 'ALL' && !list.some(d => d.key === state.outlet.psDsr)) state.outlet.psDsr = 'ALL';
+  const multi = state.dt === 'ALL';
+  sel.innerHTML = `<option value="ALL">Semua DSR (${list.filter(d => d.code).length})</option>` + list.map(d =>
+    `<option value="${esc(d.key)}" ${d.key === state.outlet.psDsr ? 'selected' : ''}>${multi ? dtShort(d.dt) + ' · ' : ''}${esc(d.name)}${d.code ? ` (${esc(d.code)})` : ''} · ${fmtNum(d.n)} toko</option>`).join('');
+  sel.disabled = !list.length;
+}
 function PS_COLS(showDt) {
   return [
     { key: 'no', label: '#', html: (r, i) => i + 1 },
@@ -1005,14 +1057,18 @@ function PS_COLS(showDt) {
     ...(showDt ? [{ key: 'dt', label: 'DT', get: r => dtShort(r.dt), html: r => dtShort(r.dt) }] : []),
     { key: 'dsr', label: 'DSR', get: r => r.dsr || '\uffff', html: r => esc(r.dsr || 'Tanpa DSR'), wrap: true },
     { key: 'pjp', label: 'PJP', get: r => r.pjp, html: r => esc(r.pjp || '-') },
-    { key: 'sub', label: 'Sub Element', get: r => r.sub, html: r => esc(r.sub || '-') },
     { key: 'type', label: 'Tipe', get: r => r.full ? 'FULL' : 'LITE', html: r => `<span class="type-chip ${r.full ? 'full' : 'lite'}">${r.full ? 'FULL' : 'LITE'}</span>` },
     { key: 'pa', label: 'Avail', get: r => +r.pa, html: r => yesNo(r.pa) },
     { key: 'pv', label: 'Visib', get: r => +r.pv, html: r => yesNo(r.pv) },
     { key: 'pd', label: 'Digi', get: r => +r.pd, html: r => yesNo(r.pd) },
     { key: 'perfect', label: 'Perfect Store', get: r => +r.perfect, html: r => r.perfect ? '<span class="pill s-green">PERFECT</span>' : '<span class="pill s-red">BELUM</span>' },
     { key: 'missing', label: 'Yang kurang', get: r => r.missing, html: r => esc(r.missing || '-'), wrap: true },
-    { key: 'gsv', label: 'Omset bln ini', num: true, get: r => r.gsv ?? -1, html: r => r.gsv == null ? '<span class="muted">n/a</span>' : fmtRp(r.gsv) }
+    { key: 'asTarget', label: 'Assortment Target', num: true, get: r => r.asTarget, html: r => r.asTarget ? fmtNum(r.asTarget) : '-' },
+    { key: 'asAch', label: 'Assortment Achieve', num: true, get: r => r.asAch, html: r => fmtNum(r.asAch) },
+    { key: 'asPct', label: '% Assortment', num: true, get: r => r.asTarget ? r.asAch / r.asTarget : -1,
+      html: r => r.asTarget ? `<span class="pill ${asStatus(r.asAch / r.asTarget)}">${fmtPct(r.asAch / r.asTarget)}</span>` : '-' },
+    { key: 'asGap', label: 'Kekurangan Assortment', num: true, get: r => Math.max(0, r.asTarget - r.asAch),
+      html: r => !r.asTarget ? '-' : r.asTarget - r.asAch > 0 ? `<span class="gap">${fmtNum(r.asTarget - r.asAch)}</span>` : '<span class="gap-ok">Tercapai</span>' }
   ];
 }
 
@@ -1020,6 +1076,7 @@ function renderOutletPage() {
   const tab = state.outlet.tab;
   document.querySelectorAll('.out-tab').forEach(b => { const on = b.dataset.otab === tab; b.classList.toggle('active', on); b.setAttribute('aria-selected', on); });
   $('psStatusWrap').hidden = tab !== 'ps';
+  $('psDsrWrap').hidden = tab !== 'ps';
   $('outletBody').innerHTML = tab === 'perf' ? renderOutletPerf() : renderOutletPs();
 }
 
@@ -1034,6 +1091,7 @@ function bindOutletEvents() {
     t = setTimeout(() => { state.outlet.q = e.target.value.trim(); state.outlet.limit = OUT_LIMIT; renderOutletPage(); }, 150);
   });
   $('psStatus').addEventListener('change', e => { state.outlet.psStatus = e.target.value; renderOutletPage(); });
+  $('psDsr').addEventListener('change', e => { state.outlet.psDsr = e.target.value; state.outlet.limit = OUT_LIMIT; renderOutletPage(); });
   const sortBy = th => {
     const tb = th.dataset.table, key = th.dataset.sort, cur = state.outlet.sort[tb];
     if (!cur) return;
@@ -1056,10 +1114,10 @@ function bindOutletEvents() {
 function bindEvents() {
   $('dtTabs').addEventListener('click', e => {
     const b = e.target.closest('.tab'); if (!b || b.dataset.dt === state.dt || state.loading) return;
-    state.dt = b.dataset.dt; state.dsr = 'ALL';
+    state.dt = b.dataset.dt; state.dsr = 'ALL'; state.outlet.psDsr = 'ALL';
     renderTabs(); renderDsrSelect(); render();
   });
-  $('dsrSelect').addEventListener('change', e => { state.dsr = e.target.value; render(); });
+  $('dsrSelect').addEventListener('change', e => { state.dsr = e.target.value; state.outlet.psDsr = 'ALL'; render(); });
   $('incentiveChk').addEventListener('change', e => { state.showIncentive = e.target.checked; render(); });
   $('kpiGrid').addEventListener('click', e => {
     const x = e.target.closest('.expand-btn');

@@ -316,3 +316,8 @@ tr.row-ok td { background: #f0fdf4; }
 @media (max-width: 640px) { .search-wrap { max-width: none; } .out-tabs { align-self: stretch; } .out-tab { flex: 1; } }
 #incentiveWrap[hidden], #psStatusWrap[hidden] { display: none !important; }
 @media (max-width: 640px) { .out-tab { white-space: normal; font-size: 12px; padding: 8px 10px; } }
+
+/* ===== Kekurangan (gap) & filter DSR outlet panel ===== */
+td.gap, .gap { color: var(--red); font-weight: 700; }
+td.gap-ok, .gap-ok { color: var(--green); font-weight: 800; }
+#psDsrWrap[hidden] { display: none !important; }
