@@ -40,7 +40,22 @@ const DTS = [
       { PC: 'AGUS TRIYADI', BW: 'AGUS TRIYADI', HC: 'LIUS', FOODS: 'LIUS' }
     ]
   },
-  { code: 'ACP', distCode: '15168386',    name: 'PT. Aditama Citra Papua',     short: 'Aditama',       salesFile: 'data/aditama.xlsx',       targetFile: 'data/target_aditama.csv',       excludeDsr: ['00'] },
+  { code: 'ACP', distCode: '15168386',    name: 'PT. Aditama Citra Papua',     short: 'Aditama',       salesFile: 'data/aditama.xlsx',       targetFile: 'data/target_aditama.csv',
+    // Shopsales: kode '14' di Aditama (nama SHOPSALES juga otomatis dikenali)
+    excludeDsr: ['00', '14'],
+    // UBAH: daftar DSR. onlyListed = true → DSR di luar daftar ini DIABAIKAN (tidak dihitung),
+    // kecuali Shopsales yang tetap masuk pencapaian total DT.
+    onlyListed: true,
+    // UBAH: salesman split (KHUSUS Omset) — omset BU dialihkan ke DSR pemegang BU
+    split: [
+      { PC: 'WILLIAM LOUHENAPESSY', BW: 'WILLIAM LOUHENAPESSY', HC: 'ALIM NUR ULUL MAFTUKHIN', FOODS: 'ALIM NUR ULUL MAFTUKHIN' },
+      { PC: 'JAMIANTO TANDILANGI',  BW: 'JAMIANTO TANDILANGI',  HC: 'HERIANTO PARDI RANSA',    FOODS: 'HERIANTO PARDI RANSA' }
+    ],
+    dsrType: {
+      GT: ['SURYADI', 'ADRIANUS SANDRI', 'SARMAN SUDIRMAN', 'USKUR', 'ALIM NUR ULUL MAFTUKHIN',
+           'WILLIAM LOUHENAPESSY', 'HERIANTO PARDI RANSA', 'JAMIANTO TANDILANGI']
+    }
+  },
   { code: 'KKK', distCode: '15420177',    name: 'CV. Karya Kasih Karunia',     short: 'Karya Kasih',   salesFile: 'data/karya_kasih.xlsx',   targetFile: 'data/target_karya_kasih.csv',   excludeDsr: ['00'] }
 ];
 /* Tipe DSR (urutan tampil) */
@@ -49,6 +64,9 @@ const TYPES = [
   { code: 'MT', name: 'MT' }
 ];
 const up = s => String(s ?? '').trim().toUpperCase();
+const isShop = (dt, code, name) => (dt.excludeDsr || []).includes(code) || /SHOP\s*SALES?/i.test(name || '');
+const isListed = (dt, name) => Object.values(dt.dsrType || {}).some(list => (list || []).some(n => up(n) === up(name)));
+const normCode = c => String(c ?? '').trim().replace(/^0+(?=\d)/, '');   // "011" = "11"
 function typeOfDsr(dt, name) {
   const t = dt.dsrType || {};
   for (const k of Object.keys(t)) if ((t[k] || []).some(n => up(n) === up(name))) return k;
@@ -221,17 +239,26 @@ async function loadSales(dt) {
     });
   });
   if (!rows.length) throw new Error('Format file tidak dikenali');
+  if (dt.onlyListed) {
+    const kept = rows.filter(r => isShop(dt, r.dsr, r.dsrName) || isListed(dt, r.dsrName));
+    kept.forEach(r => { if (isShop(dt, r.dsr, r.dsrName) && !dt.excludeDsr.includes(r.dsr)) dt.excludeDsr.push(r.dsr); });
+    return kept;
+  }
   return rows;
 }
 
-async function loadTargets(dt) {
+async function loadTargets(dt, dsrs = []) {
   const res = await fetchFile(dt.targetFile).catch(() => null);
   const map = new Map();
   if (!res) return map;
-  const parsed = Papa.parse(await res.text(), { header: true, skipEmptyLines: true });
+  const parsed = Papa.parse(await res.text(), { header: true, skipEmptyLines: true, delimiter: '' });
   const buSum = new Map();
+  // Kode di file target bisa kehilangan nol di depan (Excel: "011" → 11) → cocokkan ulang ke kode asli / nama DSR
+  const byCode = new Map(dsrs.map(s => [normCode(s.code), s.code]));
+  const byName = new Map(dsrs.map(s => [up(s.name), s.code]));
   parsed.data.forEach(r => {
-    const code = String(r.Kode_DSR ?? '').trim(), kpi = String(r.KPI ?? '').trim().toUpperCase();
+    const raw = String(r.Kode_DSR ?? '').trim(), kpi = String(r.KPI ?? '').trim().toUpperCase();
+    const code = up(raw) === 'TOTAL' ? 'TOTAL' : (byCode.get(normCode(raw)) || byName.get(up(r.Nama_DSR)) || raw);
     const buRaw = String(r.BU ?? '').trim();
     const t = toNum(r.Target);
     if (!code || !kpi || !(t > 0)) return;
@@ -351,11 +378,11 @@ async function loadAll() {
     try {
       const rows = await loadSales(dt);
       if (!rows) { state.data[dt.code] = { status: 'none' }; continue; }
-      const targets = await loadTargets(dt);
       const dsrMap = new Map();
       rows.forEach(r => { if (!dt.excludeDsr.includes(r.dsr) && !dsrMap.has(r.dsr)) dsrMap.set(r.dsr, r.dsrName); });
       const dsrs = [...dsrMap.entries()].map(([code, name]) => ({ code, name, dt: dt.code, type: typeOfDsr(dt, name) }))
         .sort((a, b) => a.code.localeCompare(b.code, 'id', { numeric: true }));
+      const targets = await loadTargets(dt, dsrs);
       const lastDate = rows.reduce((m, r) => (r.date > m ? r.date : m), new Date(0));
       state.data[dt.code] = { status: 'ok', rows, targets, dsrs, lastDate };
     } catch (e) {
